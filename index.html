@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="pt-BR">
+<!--
+  ============================================================================
+  CONTRATO DE IDs — Mural (gerador de quadro de visões)
+  Esta lista é a interface pública deste documento. src/main.js, src/ui/stage.js
+  e src/ui/controls.js devem programar contra exatamente estes ids.
+  ============================================================================
+
+  BARRA SUPERIOR
+    #btn-menu            <button>  alterna a gaveta lateral (visível < 1024px)
+    #btn-undo            <button>  desfazer
+    #btn-redo            <button>  refazer
+    #btn-zoom-out        <button>  reduzir zoom
+    #btn-zoom-fit        <button>  ajustar à tela
+    #btn-zoom-in         <button>  ampliar zoom
+    #zoom-level          <span>    leitura do zoom, ex.: "100%"
+    #btn-export          <button>  ação primária "Exportar"
+
+  PALCO
+    #stage               <div>     área de rolagem/enquadramento do quadro
+    #board-canvas        <canvas>  superfície de desenho
+    #empty-state         <div>     sobreposição de estado vazio
+    #btn-pick-empty      <button>  "Escolher fotos" (dentro de #empty-state)
+    #cell-toolbar        <div>     barra flutuante de seleção (oculta: [hidden])
+    #btn-cell-replace    <button>  trocar imagem da célula
+    #btn-cell-remove     <button>  remover célula
+    #btn-cell-rotate     <button>  girar imagem da célula
+    #cell-zoom           <input range> zoom interno da célula (100–300)
+
+  BANDEJA DE FOTOS
+    #photo-tray          <div>     contêiner das miniaturas
+    #btn-add-photos      <button>  "Adicionar fotos"
+    #photo-count         <span>    leitura da contagem
+    #file-input          <input file> ÚNICO seletor de arquivos compartilhado
+
+  SOBREPOSIÇÃO DE ARRASTAR
+    #drop-overlay        <div>     realce ao arrastar arquivos sobre a janela
+
+  BARRA LATERAL
+    #sidebar             <aside>   painel de controles (rolável)
+    #sidebar-backdrop    <div>     fundo clicável da gaveta (< 1024px)
+
+  0. ESTA FOTO  (oculto: [hidden] enquanto nada estiver selecionado)
+    #photo-group         <details> seção inteira
+    #photo-cut           <div>     grupo segmentado; data-value="auto" ou um dos
+                                   13 recortes — grava item.cutOverride
+    #photo-category      <div>     grupo segmentado, preenchido em runtime a
+                                   partir de CATEGORIES — só filtra a lista abaixo
+    #photo-decor         <div>     grupo segmentado, preenchido em runtime com os
+                                   estilos da categoria; grava item.cutOverride
+    #photo-tint          <div>     grupo segmentado; data-value="none" ou tinta
+    #photo-frame  + #photo-frame-value      moldura em mm
+    #photo-frame-color   <input color>      cor da moldura
+    #photo-size   + #photo-size-value       escala da peça em %
+    #photo-tilt   + #photo-tilt-value       giro em graus
+    #photo-elevation + #photo-elevation-value  peso da sombra em %
+    #btn-photo-front     <button>  traz a peça para a frente
+    #btn-photo-back      <button>  manda a peça para trás
+    #btn-photo-reset     <button>  devolve a peça ao padrão do quadro
+
+  1. TAMANHO
+    #board-preset        <select>  VAZIO no HTML; preenchido em runtime com
+                                   <optgroup> + <option value="...">
+    #orientation         <div>     grupo segmentado
+                                     button[data-value="portrait"]
+                                     button[data-value="landscape"]
+    #custom-size         <div>     linha de tamanho livre (oculta: [hidden])
+    #custom-w            <input number> largura personalizada
+    #custom-h            <input number> altura personalizada
+    #size-readout        <p>       leitura, ex.: "30 × 40 cm · 3543 × 4724 px"
+
+  2. ARRANJO
+    #engine              <div>     grupo segmentado
+                                     data-value="mosaic" | "bento" | "scatter"
+    #btn-shuffle         <button>  "Novo arranjo"
+    #margin  + #margin-value
+    #gutter  + #gutter-value
+    #variety + #variety-value
+
+  3. ESTILO
+    #cut                 <div>     grupo segmentado
+                                     data-value="torn" | "sharp" | "rounded"
+                                                | "polaroid" | "arch" | "circle"
+    #tear   + #tear-value
+    #fringe + #fringe-value
+    #shadow + #shadow-value
+    #tilt   + #tilt-value
+    #tape   + #tape-value
+    #radius + #radius-value
+
+  4. FUNDO
+    #surface-kind        <div>     grupo segmentado
+                                     data-value="paper" | "solid"
+                                                | "gradient" | "image"
+    #surface-color       <input color> cor primária
+    #surface-color-b     <input color> cor secundária (degradê)
+    #grain    + #grain-value
+    #vignette + #vignette-value
+
+  5. EXPORTAR
+    #export-format       <div>     grupo segmentado
+                                     data-value="png" | "jpg" | "pdf"
+    #export-dpi          <select>  150 / 300 / 600
+    #export-bleed        <input number> sangria em mm
+    #export-crop         <input checkbox> marcas de corte (aparência de switch)
+    #export-readout      <p>       leitura do arquivo resultante
+    #export-warning      <p>       aviso (oculto: [hidden])
+
+  PROGRESSO E AVISOS
+    #progress            <div>     barra de progresso (oculta: [hidden])
+    #progress-fill       <div>     preenchimento; ajustar style.width
+    #progress-label      <span>    rótulo do progresso
+    #toasts              <div>     contêiner das notificações (src/ui/toast.js)
+
+  CONVENÇÕES
+    - Grupos segmentados: os botões filhos carregam data-value; o ativo recebe
+      a classe .is-active e aria-pressed="true".
+    - Todo slider tem um <span id="<id>-value"> com o valor legível.
+    - Ocultar/exibir usa o atributo booleano [hidden].
+  ============================================================================
+-->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Mural — gerador de quadro de visões</title>
+<meta name="description" content="Monte um quadro de visões pronto para impressão a partir das suas fotos.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles/app.css">
+</head>
+<body>
+
+<a class="skip-link" href="#stage">Ir para o quadro</a>
+
+<!-- ────────────────────────────── BARRA SUPERIOR ────────────────────────── -->
+<header class="topbar">
+  <div class="topbar__left">
+    <button id="btn-menu" class="icon-btn topbar__menu" type="button" aria-label="Abrir controles" aria-expanded="false" aria-controls="sidebar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <div class="wordmark">
+      <span class="wordmark__mark" aria-hidden="true"></span>
+      <span class="wordmark__name">Mural</span>
+      <span class="wordmark__tag">quadro de visões</span>
+    </div>
+  </div>
+
+  <div class="topbar__center">
+    <div class="btn-cluster" role="group" aria-label="Histórico">
+      <button id="btn-undo" class="icon-btn" type="button" title="Desfazer" aria-label="Desfazer">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>
+      </button>
+      <button id="btn-redo" class="icon-btn" type="button" title="Refazer" aria-label="Refazer">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg>
+      </button>
+    </div>
+
+    <div class="btn-cluster btn-cluster--zoom" role="group" aria-label="Zoom">
+      <button id="btn-zoom-out" class="icon-btn" type="button" title="Reduzir" aria-label="Reduzir zoom">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M8 11h6M20 20l-4.4-4.4"/></svg>
+      </button>
+      <button id="btn-zoom-fit" class="zoom-fit" type="button" title="Ajustar à tela">
+        <span id="zoom-level" class="zoom-fit__value">100%</span>
+      </button>
+      <button id="btn-zoom-in" class="icon-btn" type="button" title="Ampliar" aria-label="Ampliar zoom">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M8 11h6M11 8v6M20 20l-4.4-4.4"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="topbar__right">
+    <button id="btn-export" class="btn btn--primary" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true" class="btn__icon"><path d="M12 15V3"/><path d="m8 7 4-4 4 4"/><path d="M4 15v3a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-3"/></svg>
+      Exportar
+    </button>
+  </div>
+</header>
+
+<div class="app">
+
+  <!-- ───────────────────────────── BARRA LATERAL ───────────────────────── -->
+  <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
+
+  <aside id="sidebar" class="sidebar" aria-label="Controles do quadro">
+    <div class="sidebar__scroll">
+
+      <!-- 0. ESTA FOTO (só aparece com uma foto selecionada) -->
+      <details id="photo-group" class="group group--photo" open hidden>
+        <summary class="group__head">
+          <span class="group__legend">Esta foto</span>
+          <svg class="group__chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="group__body">
+          <div class="field">
+            <span class="field__label">Formato só desta</span>
+            <div id="photo-cut" class="seg seg--wrap" role="group" aria-label="Formato desta foto">
+              <button class="seg__btn is-active" type="button" data-value="auto" aria-pressed="true">Igual ao quadro</button>
+              <button class="seg__btn" type="button" data-value="torn" aria-pressed="false">Rasgado</button>
+              <button class="seg__btn" type="button" data-value="sharp" aria-pressed="false">Reto</button>
+              <button class="seg__btn" type="button" data-value="rounded" aria-pressed="false">Arredondado</button>
+              <button class="seg__btn" type="button" data-value="polaroid" aria-pressed="false">Polaroide</button>
+              <button class="seg__btn" type="button" data-value="arch" aria-pressed="false">Arco</button>
+              <button class="seg__btn" type="button" data-value="circle" aria-pressed="false">Círculo</button>
+              <button class="seg__btn" type="button" data-value="hex" aria-pressed="false">Hexágono</button>
+              <button class="seg__btn" type="button" data-value="blob" aria-pressed="false">Orgânico</button>
+              <button class="seg__btn" type="button" data-value="scallop" aria-pressed="false">Ondulado</button>
+              <button class="seg__btn" type="button" data-value="stamp" aria-pressed="false">Selo</button>
+              <button class="seg__btn" type="button" data-value="tag" aria-pressed="false">Etiqueta</button>
+              <button class="seg__btn" type="button" data-value="film" aria-pressed="false">Filme</button>
+              <button class="seg__btn" type="button" data-value="heart" aria-pressed="false">Coração</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <span class="field__label">Categoria</span>
+            <div id="photo-category" class="seg seg--wrap" role="group" aria-label="Categoria de customização"></div>
+          </div>
+
+          <div class="field">
+            <span class="field__label">Customização</span>
+            <div id="photo-decor" class="seg seg--wrap seg--decor" role="group" aria-label="Customização desta foto"></div>
+          </div>
+
+          <div class="field">
+            <span class="field__label">Cor</span>
+            <div id="photo-tint" class="seg seg--wrap" role="group" aria-label="Tratamento de cor">
+              <button class="seg__btn is-active" type="button" data-value="none" aria-pressed="true">Original</button>
+              <button class="seg__btn" type="button" data-value="bw" aria-pressed="false">P&amp;B</button>
+              <button class="seg__btn" type="button" data-value="noir" aria-pressed="false">Noir</button>
+              <button class="seg__btn" type="button" data-value="sepia" aria-pressed="false">Sépia</button>
+              <button class="seg__btn" type="button" data-value="warm" aria-pressed="false">Quente</button>
+              <button class="seg__btn" type="button" data-value="cool" aria-pressed="false">Frio</button>
+              <button class="seg__btn" type="button" data-value="fade" aria-pressed="false">Desbotado</button>
+              <button class="seg__btn" type="button" data-value="vivid" aria-pressed="false">Vivo</button>
+            </div>
+          </div>
+
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="photo-frame">Moldura</label><span id="photo-frame-value" class="slider__value">0 mm</span></div>
+            <input id="photo-frame" type="range" min="0" max="12" step="0.5" value="0">
+          </div>
+
+          <div class="field">
+            <span class="field__label">Cor da moldura</span>
+            <div class="swatches">
+              <label class="swatch">
+                <input id="photo-frame-color" type="color" value="#ffffff">
+                <span class="swatch__name">Borda</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="photo-size">Tamanho</label><span id="photo-size-value" class="slider__value">100%</span></div>
+            <input id="photo-size" type="range" min="20" max="300" step="1" value="100">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="photo-tilt">Giro</label><span id="photo-tilt-value" class="slider__value">0°</span></div>
+            <input id="photo-tilt" type="range" min="-180" max="180" step="1" value="0">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="photo-elevation">Sombra</label><span id="photo-elevation-value" class="slider__value">100%</span></div>
+            <input id="photo-elevation" type="range" min="0" max="200" step="1" value="100">
+          </div>
+
+          <div class="field">
+            <span class="field__label">Ordem</span>
+            <div class="seg" role="group" aria-label="Ordem de empilhamento">
+              <button id="btn-photo-front" class="seg__btn" type="button">Para a frente</button>
+              <button id="btn-photo-back" class="seg__btn" type="button">Para trás</button>
+            </div>
+          </div>
+
+          <button id="btn-photo-reset" class="btn btn--ghost btn--block" type="button">Voltar ao padrão</button>
+        </div>
+      </details>
+
+      <!-- 1. TAMANHO -->
+      <details class="group" open>
+        <summary class="group__head">
+          <span class="group__legend">Tamanho</span>
+          <svg class="group__chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="group__body">
+          <div class="field">
+            <label class="field__label" for="board-preset">Formato</label>
+            <div class="select">
+              <select id="board-preset"></select>
+              <svg class="select__chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+
+          <div class="field">
+            <span class="field__label">Orientação</span>
+            <div id="orientation" class="seg" role="group" aria-label="Orientação">
+              <button class="seg__btn is-active" type="button" data-value="portrait" aria-pressed="true">Retrato</button>
+              <button class="seg__btn" type="button" data-value="landscape" aria-pressed="false">Paisagem</button>
+            </div>
+          </div>
+
+          <div id="custom-size" class="field custom-size" hidden>
+            <span class="field__label">Medidas livres (cm)</span>
+            <div class="custom-size__row">
+              <label class="num">
+                <span class="num__tag">L</span>
+                <input id="custom-w" type="number" min="5" max="200" step="0.5" value="30" inputmode="decimal">
+              </label>
+              <span class="custom-size__x" aria-hidden="true">×</span>
+              <label class="num">
+                <span class="num__tag">A</span>
+                <input id="custom-h" type="number" min="5" max="200" step="0.5" value="40" inputmode="decimal">
+              </label>
+            </div>
+          </div>
+
+          <p id="size-readout" class="readout">30 × 40 cm · 300 dpi</p>
+        </div>
+      </details>
+
+      <!-- 2. ARRANJO -->
+      <details class="group" open>
+        <summary class="group__head">
+          <span class="group__legend">Arranjo</span>
+          <svg class="group__chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="group__body">
+          <div class="field">
+            <span class="field__label">Motor</span>
+            <div id="engine" class="seg" role="group" aria-label="Motor de arranjo">
+              <button class="seg__btn is-active" type="button" data-value="mosaic" aria-pressed="true">Mosaico</button>
+              <button class="seg__btn" type="button" data-value="bento" aria-pressed="false">Bento</button>
+              <button class="seg__btn" type="button" data-value="scatter" aria-pressed="false">Espalhado</button>
+            </div>
+          </div>
+
+          <button id="btn-shuffle" class="btn btn--ghost btn--block" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="btn__icon"><path d="M17 4h4v4"/><path d="M3 20 21 4"/><path d="M17 20h4v-4"/><path d="m3 4 6 6"/><path d="m15 16 6 4"/></svg>
+            Novo arranjo
+          </button>
+
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="margin">Margem</label><span id="margin-value" class="slider__value">18</span></div>
+            <input id="margin" type="range" min="0" max="60" step="1" value="18">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="gutter">Respiro</label><span id="gutter-value" class="slider__value">12</span></div>
+            <input id="gutter" type="range" min="0" max="48" step="1" value="12">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="variety">Variedade</label><span id="variety-value" class="slider__value">50</span></div>
+            <input id="variety" type="range" min="0" max="100" step="1" value="50">
+          </div>
+        </div>
+      </details>
+
+      <!-- 3. ESTILO -->
+      <details class="group" open>
+        <summary class="group__head">
+          <span class="group__legend">Estilo</span>
+          <svg class="group__chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="group__body">
+          <div class="field">
+            <span class="field__label">Recorte</span>
+            <div id="cut" class="seg seg--wrap" role="group" aria-label="Tipo de recorte">
+              <button class="seg__btn is-active" type="button" data-value="torn" aria-pressed="true">Rasgado</button>
+              <button class="seg__btn" type="button" data-value="sharp" aria-pressed="false">Reto</button>
+              <button class="seg__btn" type="button" data-value="rounded" aria-pressed="false">Arredondado</button>
+              <button class="seg__btn" type="button" data-value="polaroid" aria-pressed="false">Polaroide</button>
+              <button class="seg__btn" type="button" data-value="arch" aria-pressed="false">Arco</button>
+              <button class="seg__btn" type="button" data-value="circle" aria-pressed="false">Círculo</button>
+              <button class="seg__btn" type="button" data-value="hex" aria-pressed="false">Hexágono</button>
+              <button class="seg__btn" type="button" data-value="blob" aria-pressed="false">Orgânico</button>
+              <button class="seg__btn" type="button" data-value="scallop" aria-pressed="false">Ondulado</button>
+              <button class="seg__btn" type="button" data-value="stamp" aria-pressed="false">Selo</button>
+              <button class="seg__btn" type="button" data-value="tag" aria-pressed="false">Etiqueta</button>
+              <button class="seg__btn" type="button" data-value="film" aria-pressed="false">Filme</button>
+              <button class="seg__btn" type="button" data-value="heart" aria-pressed="false">Coração</button>
+            </div>
+          </div>
+
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="tear">Rasgo</label><span id="tear-value" class="slider__value">55</span></div>
+            <input id="tear" type="range" min="0" max="100" step="1" value="55">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="fringe">Fibra</label><span id="fringe-value" class="slider__value">40</span></div>
+            <input id="fringe" type="range" min="0" max="100" step="1" value="40">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="shadow">Sombra</label><span id="shadow-value" class="slider__value">35</span></div>
+            <input id="shadow" type="range" min="0" max="100" step="1" value="35">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="tilt">Inclinação</label><span id="tilt-value" class="slider__value">20</span></div>
+            <input id="tilt" type="range" min="0" max="100" step="1" value="20">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="tape">Fita</label><span id="tape-value" class="slider__value">0</span></div>
+            <input id="tape" type="range" min="0" max="100" step="1" value="0">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="radius">Cantos</label><span id="radius-value" class="slider__value">8</span></div>
+            <input id="radius" type="range" min="0" max="50" step="1" value="8">
+          </div>
+        </div>
+      </details>
+
+      <!-- 4. FUNDO -->
+      <details class="group" open>
+        <summary class="group__head">
+          <span class="group__legend">Fundo</span>
+          <svg class="group__chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="group__body">
+          <div class="field">
+            <span class="field__label">Superfície</span>
+            <div id="surface-kind" class="seg seg--wrap" role="group" aria-label="Tipo de superfície">
+              <button class="seg__btn is-active" type="button" data-value="paper" aria-pressed="true">Papel</button>
+              <button class="seg__btn" type="button" data-value="solid" aria-pressed="false">Sólido</button>
+              <button class="seg__btn" type="button" data-value="gradient" aria-pressed="false">Degradê</button>
+              <button class="seg__btn" type="button" data-value="image" aria-pressed="false">Imagem</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <span class="field__label">Cores</span>
+            <div class="swatches">
+              <label class="swatch">
+                <input id="surface-color" type="color" value="#efe7db">
+                <span class="swatch__name">Base</span>
+              </label>
+              <label class="swatch">
+                <input id="surface-color-b" type="color" value="#c9b8a2">
+                <span class="swatch__name">Segunda</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="grain">Grão</label><span id="grain-value" class="slider__value">30</span></div>
+            <input id="grain" type="range" min="0" max="100" step="1" value="30">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="vignette">Vinheta</label><span id="vignette-value" class="slider__value">18</span></div>
+            <input id="vignette" type="range" min="0" max="100" step="1" value="18">
+          </div>
+        </div>
+      </details>
+
+      <!-- 5. EXPORTAR -->
+      <details class="group" open>
+        <summary class="group__head">
+          <span class="group__legend">Exportar</span>
+          <svg class="group__chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="group__body">
+          <div class="field">
+            <span class="field__label">Formato</span>
+            <div id="export-format" class="seg" role="group" aria-label="Formato de exportação">
+              <button class="seg__btn is-active" type="button" data-value="png" aria-pressed="true">PNG</button>
+              <button class="seg__btn" type="button" data-value="jpg" aria-pressed="false">JPG</button>
+              <button class="seg__btn" type="button" data-value="pdf" aria-pressed="false">PDF</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="field__label" for="export-dpi">Resolução</label>
+            <div class="select">
+              <select id="export-dpi">
+                <option value="150">150 dpi · rascunho</option>
+                <option value="300" selected>300 dpi · impressão</option>
+                <option value="600">600 dpi · alta fidelidade</option>
+              </select>
+              <svg class="select__chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+
+          <div class="field field--row">
+            <label class="field__label" for="export-bleed">Sangria (mm)</label>
+            <label class="num num--compact">
+              <input id="export-bleed" type="number" min="0" max="10" step="0.5" value="3" inputmode="decimal">
+            </label>
+          </div>
+
+          <div class="field field--row">
+            <label class="field__label" for="export-crop">Marcas de corte</label>
+            <label class="switch">
+              <input id="export-crop" type="checkbox">
+              <span class="switch__track" aria-hidden="true"><span class="switch__knob"></span></span>
+            </label>
+          </div>
+
+          <p id="export-readout" class="readout">PNG · 3543 × 4724 px · ~8 MB</p>
+          <p id="export-warning" class="warning" hidden></p>
+        </div>
+      </details>
+
+      <p class="sidebar__foot">Clique numa foto para selecionar. Arrastar a selecionada move; as alças giram e redimensionam; Alt arrastando reenquadra por dentro.</p>
+    </div>
+  </aside>
+
+  <!-- ────────────────────────────── ÁREA CENTRAL ───────────────────────── -->
+  <main class="main">
+
+    <section class="desk">
+      <div id="stage" class="stage" tabindex="-1" aria-label="Quadro">
+        <canvas id="board-canvas" width="1200" height="1600" role="img" aria-label="Pré-visualização do quadro"></canvas>
+
+        <div id="empty-state" class="empty">
+          <div class="empty__card">
+            <div class="empty__art" aria-hidden="true">
+              <span class="empty__sheet empty__sheet--a"></span>
+              <span class="empty__sheet empty__sheet--b"></span>
+              <span class="empty__sheet empty__sheet--c"></span>
+            </div>
+            <h1 class="empty__title">Comece pelas suas fotos</h1>
+            <p class="empty__text">Escolha algumas imagens e o Mural monta um quadro de visões pronto para imprimir e pendurar na parede.</p>
+            <button id="btn-pick-empty" class="btn btn--primary btn--lg" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="btn__icon"><path d="M3 17V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><circle cx="8.5" cy="10" r="1.6"/><path d="m4 17 5-5 4 4 3-2 4 4"/></svg>
+              Escolher fotos
+            </button>
+            <p class="empty__hint">ou solte os arquivos aqui</p>
+          </div>
+        </div>
+
+        <div id="cell-toolbar" class="cell-toolbar" role="toolbar" aria-label="Foto selecionada" hidden>
+          <button id="btn-cell-replace" class="icon-btn icon-btn--sm" type="button" title="Trocar foto" aria-label="Trocar foto">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9a8 8 0 0 1 13.3-3.3L20 8"/><path d="M20 4v4h-4"/><path d="M20 15a8 8 0 0 1-13.3 3.3L4 16"/><path d="M4 20v-4h4"/></svg>
+          </button>
+          <button id="btn-cell-rotate" class="icon-btn icon-btn--sm" type="button" title="Girar" aria-label="Girar foto">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5"/></svg>
+          </button>
+          <span class="cell-toolbar__sep" aria-hidden="true"></span>
+          <label class="cell-toolbar__zoom">
+            <span class="sr-only">Zoom da foto</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="cell-toolbar__icon"><circle cx="11" cy="11" r="6.5"/><path d="M8 11h6M11 8v6M20 20l-4.4-4.4"/></svg>
+            <input id="cell-zoom" type="range" min="100" max="300" step="1" value="100">
+          </label>
+          <span class="cell-toolbar__sep" aria-hidden="true"></span>
+          <button id="btn-cell-remove" class="icon-btn icon-btn--sm icon-btn--danger" type="button" title="Remover" aria-label="Remover foto">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div id="progress" class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden>
+        <div class="progress__bar"><div id="progress-fill" class="progress__fill"></div></div>
+        <span id="progress-label" class="progress__label">Preparando…</span>
+      </div>
+    </section>
+
+    <!-- ─────────────────────────── BANDEJA DE FOTOS ────────────────────── -->
+    <section class="tray" aria-label="Fotos">
+      <div class="tray__head">
+        <span class="tray__title">Fotos</span>
+        <span id="photo-count" class="tray__count">0 fotos</span>
+      </div>
+      <div id="photo-tray" class="tray__strip"></div>
+      <button id="btn-add-photos" class="btn btn--ghost tray__add" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="btn__icon"><path d="M12 5v14M5 12h14"/></svg>
+        Adicionar fotos
+      </button>
+      <input type="file" id="file-input" accept="image/*" multiple hidden>
+    </section>
+
+  </main>
+</div>
+
+<!-- ──────────────────────── SOBREPOSIÇÃO DE ARRASTAR ─────────────────────── -->
+<div id="drop-overlay" class="drop" hidden>
+  <div class="drop__inner">
+    <svg viewBox="0 0 24 24" aria-hidden="true" class="drop__icon"><path d="M12 16V4"/><path d="m8 8 4-4 4 4"/><path d="M4 16v2a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-2"/></svg>
+    <p class="drop__title">Solte para adicionar</p>
+    <p class="drop__text">JPG, PNG, WEBP ou HEIC</p>
+  </div>
+</div>
+
+<div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
