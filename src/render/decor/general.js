@@ -7,19 +7,13 @@
 
 import { makeRng, range, gaussian } from '../../core/rng.js';
 import { roundedRect } from '../shapes.js';
+import { inkHeight, inkLine, inkWords } from './ink.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
-/** Abaixo disso o texto vira borrão na prévia a 26% e não paga o que custa. */
-const MIN_TEXT_MM = 1.6;
-
-const SANS = "'Inter', system-ui, sans-serif";
-const SERIF = "'Fraunces', Georgia, serif";
-const MONO = 'ui-monospace, monospace';
-
-const font = (family, sizeMm, ppm, weight = 400) =>
-  `${weight} ${(sizeMm * ppm).toFixed(2)}px ${family}`;
+/** Abaixo disso a marca vira borrão na prévia a 26% e não paga o que custa. */
+const MIN_MARK_MM = 1.6;
 
 /** Fio de cabelo: some na prévia se não tiver um piso em pixel de dispositivo. */
 const hair = (mm, ppm) => Math.max(0.45, mm * ppm);
@@ -51,28 +45,6 @@ function shade(hex, amount, alpha = 1) {
   const k = Math.abs(amount);
   const c = rgbOf(hex).map((v) => Math.round(v + (target - v) * k));
   return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
-}
-
-function trackedWidth(ctx, text, spacing) {
-  const chars = Array.from(text);
-  if (!chars.length) return 0;
-  let w = -spacing;
-  for (const ch of chars) w += ctx.measureText(ch).width + spacing;
-  return w;
-}
-
-function drawTracked(ctx, text, x, y, spacing) {
-  let cx = x;
-  for (const ch of Array.from(text)) {
-    ctx.fillText(ch, cx, y);
-    cx += ctx.measureText(ch).width + spacing;
-  }
-}
-
-/** A primeira variante que cabe na largura, ou null se nenhuma couber. */
-function fitText(ctx, variants, maxWidth, spacing = 0) {
-  for (const t of variants) if (trackedWidth(ctx, t, spacing) <= maxWidth) return t;
-  return null;
 }
 
 const ringOf = (outer, inner) => {
@@ -168,10 +140,13 @@ const ingresso = {
     const band = Math.min(clamp(h * 0.17, 2.4, 6.5), (body.y1 - body.y0) * 0.3);
     const shot = { x0: body.x0, y0: body.y0, x1: body.x1, y1: body.y1 - band };
 
-    const serial = `Nº ${String(Math.floor(range(rng, 1000, 9999)))}`;
-    const hour = `${String(Math.floor(range(rng, 17, 22))).padStart(2, '0')}:${
-      Math.floor(rng() * 2) ? '30' : '00'}`;
-    const room = String(Math.floor(range(rng, 1, 10)));
+    // Comprimento das marcas impressas. É o que faz um ingresso não sair igual
+    // ao outro, agora que não há número de série para variar.
+    const mark = {
+      band: range(rng, 0.46, 0.6),
+      serial: range(rng, 0.2, 0.3),
+      stub: range(rng, 0.58, 0.76),
+    };
 
     return {
       paper,
@@ -202,48 +177,35 @@ const ingresso = {
         ctx.strokeRect(px(shot.x0), px(shot.y0), px(shot.x1 - shot.x0), px(shot.y1 - shot.y0));
 
         const bandMid = (shot.y1 + body.y1) / 2;
-        const bandSize = clamp(band * 0.46, MIN_TEXT_MM, 3.2);
+        const bandSize = clamp(band * 0.46, MIN_MARK_MM, 3.2);
         if (band >= bandSize * 1.25) {
-          ctx.textBaseline = 'middle';
-          ctx.font = font(SANS, bandSize, ppm, 600);
-          const track = px(bandSize) * 0.1;
+          const ih = inkHeight(bandSize, ppm);
           const avail = px(shot.x1 - shot.x0);
           ctx.fillStyle = INK(0.72);
-          const left = fitText(ctx, [`SESSÃO ${hour} · SALA ${room}`, `SESSÃO ${hour}`, hour],
-            avail * 0.6, track);
-          if (left) drawTracked(ctx, left, px(shot.x0), px(bandMid), track);
+          inkWords(ctx, px(shot.x0), px(bandMid), avail * mark.band, ih, 'left', 3, seed);
           ctx.fillStyle = ACCENT(0.8);
-          const wSerial = trackedWidth(ctx, serial, track);
-          if (wSerial <= avail * 0.38) {
-            drawTracked(ctx, serial, px(shot.x1) - wSerial, px(bandMid), track);
-          }
+          inkWords(ctx, px(shot.x1), px(bandMid), avail * mark.serial, ih, 'right', 2, seed ^ 0x51);
         }
 
-        // Talão: o texto corre no sentido comprido, então gira quando é vertical.
+        // Talão: a marca corre no sentido comprido, então gira quando é vertical.
         const acrossMm = alongX ? stubBox.x1 - stubBox.x0 : stubBox.y1 - stubBox.y0;
         const alongMm = alongX ? stubBox.y1 - stubBox.y0 : stubBox.x1 - stubBox.x0;
-        if (acrossMm >= MIN_TEXT_MM * 1.6) {
+        if (acrossMm >= MIN_MARK_MM * 1.6) {
           ctx.save();
           ctx.translate(px((stubBox.x0 + stubBox.x1) / 2), px((stubBox.y0 + stubBox.y1) / 2));
           if (alongX) ctx.rotate(-Math.PI / 2);
-          ctx.textBaseline = 'middle';
-          ctx.textAlign = 'left';
 
-          const twoLines = acrossMm >= MIN_TEXT_MM * 3.2;
-          const size = clamp(acrossMm * (twoLines ? 0.34 : 0.5), MIN_TEXT_MM, 4.2);
-          const track = px(size) * 0.22;
-          ctx.font = font(SANS, size, ppm, 700);
+          const twoLines = acrossMm >= MIN_MARK_MM * 3.2;
+          const size = clamp(acrossMm * (twoLines ? 0.34 : 0.5), MIN_MARK_MM, 4.2);
           ctx.fillStyle = INK(0.88);
-          const label = fitText(ctx, ['ADMIT ONE', 'ADMIT 1'], px(alongMm) * 0.94, track);
-          const y1 = twoLines ? -px(size) * 0.62 : 0;
-          if (label) drawTracked(ctx, label, -trackedWidth(ctx, label, track) / 2, y1, track);
+          inkWords(ctx, 0, twoLines ? -px(size) * 0.62 : 0, px(alongMm) * mark.stub,
+            inkHeight(size, ppm), 'center', 2, seed);
 
           if (twoLines) {
-            const small = clamp(size * 0.66, MIN_TEXT_MM, 3);
-            ctx.font = font(MONO, small, ppm, 500);
+            const small = clamp(size * 0.66, MIN_MARK_MM, 3);
             ctx.fillStyle = INK(0.5);
-            const wS = ctx.measureText(serial).width;
-            if (wS <= px(alongMm) * 0.9) ctx.fillText(serial, -wS / 2, px(size) * 0.8);
+            inkWords(ctx, 0, px(size) * 0.8, px(alongMm) * mark.serial * 1.6,
+              inkHeight(small, ppm), 'center', 2, seed ^ 0x77);
           }
           ctx.restore();
         }
@@ -655,12 +617,14 @@ const negativo = {
     const photo = roundedRect(mm(shot.x0), mm(shot.y0), mm(shot.x1 - shot.x0), mm(shot.y1 - shot.y0), 0);
     const ring = ringOf(paper, photo);
 
-    const frameNo = Math.floor(range(rng, 3, 33));
+    // Numeração de fotograma: alterna uma marca comprida e uma curta, no ritmo
+    // do "12" seguido de "12A" que o filme traz. Onde começa varia com a seed.
+    const phase = Math.floor(rng() * 2);
     const marks = [];
     for (let i = 0; i < count; i += 2) {
       marks.push({
         at: -span / 2 + step * (i + 1),
-        text: i % 4 === 0 ? String(frameNo + i / 2) : `${frameNo + Math.floor(i / 2)}A`,
+        wide: (i / 2 + phase) % 2 === 1,
       });
     }
 
@@ -693,23 +657,21 @@ const negativo = {
         // Impressão de borda na faixa entre os furos e o fotograma.
         const laneMid = band * 0.79;
         const size = clamp(band * 0.3, 0, 2.6);
-        if (size >= MIN_TEXT_MM) {
-          ctx.font = font(MONO, size, ppm, 600);
-          ctx.textBaseline = 'middle';
-          ctx.textAlign = 'center';
+        if (size >= MIN_MARK_MM) {
+          const ih = inkHeight(size, ppm);
           ctx.fillStyle = 'rgba(255,196,124,0.72)';
           ctx.save();
+          // A pista corre no sentido comprido do filme: gira quando é vertical.
           if (!alongX) ctx.rotate(Math.PI / 2);
           const across = (alongX ? hh : hw) - laneMid;
           for (const m of marks) {
-            const x = px(alongX ? m.at : m.at);
-            ctx.fillText(m.text, alongX ? x : x, px(-across));
+            const x = px(m.at);
+            inkLine(ctx, x, px(-across), px(size * (m.wide ? 1.9 : 1.3)), ih, 'center');
             ctx.beginPath();
-            ctx.arc(alongX ? x : x, px(across), px(size * 0.2), 0, TAU);
+            ctx.arc(x, px(across), px(size * 0.2), 0, TAU);
             ctx.fill();
           }
           ctx.restore();
-          ctx.textAlign = 'left';
         }
         ctx.restore();
       },
@@ -853,8 +815,6 @@ const amassado = {
 
 /* ----------------------------------------------------------------- ficha -- */
 
-const MESES = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
-
 const ficha = {
   id: 'g-ficha',
   label: 'Ficha de biblioteca',
@@ -880,9 +840,8 @@ const ficha = {
     const stampCount = Math.min(rowCount, 2 + Math.floor(rng() * 3));
     for (let i = 0; i < stampCount; i++) {
       stamps.push({
-        day: Math.floor(range(rng, 1, 29)),
-        month: Math.floor(rng() * 12),
-        year: 26 + Math.floor(rng() * 3),
+        // Datas têm comprimentos parecidos, mas não idênticos.
+        wide: range(rng, 0.74, 0.92),
         tilt: range(rng, -0.05, 0.05),
         ink: range(rng, 0.5, 0.86),
         dx: range(rng, -0.4, 0.6),
@@ -899,8 +858,6 @@ const ficha = {
 
         ctx.save();
         ctx.clip(paper);
-        ctx.textBaseline = 'alphabetic';
-        ctx.textAlign = 'left';
 
         ctx.strokeStyle = INK(0.3);
         ctx.lineWidth = hair(0.14, ppm);
@@ -917,15 +874,18 @@ const ficha = {
         const colX = shot.x0 + (shot.x1 - shot.x0) * 0.6;
         let y = top + rowH * 0.9;
 
-        if (head >= MIN_TEXT_MM) {
-          ctx.font = font(SANS, head, ppm, 600);
-          const track = px(head) * 0.14;
+        // Os dois rótulos do cabeçalho: é o par deles que faz a grade virar
+        // formulário em vez de papel pautado.
+        if (head >= MIN_MARK_MM) {
+          const ih = inkHeight(head, ppm);
+          // `top + head * 1.5` é a pauta: a marca sobe meia altura para assentar
+          // sobre ela em vez de ficar cortada ao meio.
+          const midY = px(top + head * 1.5) - ih / 2;
+          const leftW = Math.max(0, colX - shot.x0 - rowH * 0.4);
+          const rightW = Math.max(0, shot.x1 - colX - rowH * 0.4);
           ctx.fillStyle = INK(0.6);
-          const t1 = fitText(ctx, ['DEVOLVER ATÉ', 'DEVOLVER', 'DATA'],
-            px(colX - shot.x0) * 0.92, track);
-          if (t1) drawTracked(ctx, t1, px(shot.x0 + rowH * 0.2), px(top + head * 1.5), track);
-          const t2 = fitText(ctx, ['LEITOR', 'Nº'], px(shot.x1 - colX) * 0.9, track);
-          if (t2) drawTracked(ctx, t2, px(colX + rowH * 0.2), px(top + head * 1.5), track);
+          inkWords(ctx, px(shot.x0 + rowH * 0.2), midY, px(leftW * 0.62), ih, 'left', 2, 0x1d0f);
+          inkWords(ctx, px(colX + rowH * 0.2), midY, px(rightW * 0.5), ih, 'left', 1, 0x2e11);
           y = top + head * 1.5 + rowH * 0.55;
         }
 
@@ -944,25 +904,20 @@ const ficha = {
 
         // Carimbos: tinta roxa, torto, mais fraco a cada devolução.
         const size = clamp(rowH * 0.5, 0, 3);
-        if (size >= MIN_TEXT_MM) {
-          ctx.font = font(MONO, size, ppm, 600);
-          const track = px(size) * 0.1;
-          let sy = (head >= MIN_TEXT_MM ? top + head * 1.5 + rowH * 0.55 : top + rowH * 0.9) - rowH * 0.3;
+        if (size >= MIN_MARK_MM) {
+          const ih = inkHeight(size, ppm);
+          // O carimbo cai na coluna da esquerda e não pode cruzar o fio do meio.
+          const span = Math.max(0, colX - shot.x0 - rowH * 0.6);
+          let sy = (head >= MIN_MARK_MM ? top + head * 1.5 + rowH * 0.55 : top + rowH * 0.9) - rowH * 0.3;
           for (const s of stamps) {
             if (sy > bottom) break;
-            const text = fitText(ctx, [
-              `${String(s.day).padStart(2, '0')} ${MESES[s.month]} 20${s.year}`,
-              `${String(s.day).padStart(2, '0')} ${MESES[s.month]} ${s.year}`,
-              `${String(s.day).padStart(2, '0')}/${String(s.month + 1).padStart(2, '0')}/${s.year}`,
-            ], px(colX - shot.x0) * 0.86, track);
-            if (text) {
-              ctx.save();
-              ctx.translate(px(shot.x0 + rowH * 0.3 + s.dx), px(sy));
-              ctx.rotate(s.tilt);
-              ctx.fillStyle = `rgba(86,62,132,${s.ink})`;
-              drawTracked(ctx, text, 0, 0, track);
-              ctx.restore();
-            }
+            ctx.save();
+            ctx.translate(px(shot.x0 + rowH * 0.3 + s.dx), px(sy));
+            ctx.rotate(s.tilt);
+            ctx.fillStyle = `rgba(86,62,132,${s.ink})`;
+            // Três blocos: o dia, o mês e o ano de um datador de borracha.
+            inkWords(ctx, 0, -ih / 2, px(span * s.wide), ih, 'left', 3, 0x4a37);
+            ctx.restore();
             sy += rowH;
           }
         }

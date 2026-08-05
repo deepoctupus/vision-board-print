@@ -2,29 +2,22 @@
  * Amor — convite, envelope, camafeu, bilhete. Objetos de papel em que a foto foi
  * impressa, não molduras coladas por cima. Toda a medida nasce em milímetros e
  * só vira pixel na multiplicação por `pxPerMm`.
+ *
+ * Nenhuma peça escreve palavra alguma: o recorte não sabe quem está na foto nem
+ * o que se comemora, então onde ia uma linha de texto fica só a **marca** dela
+ * (ver `ink.js`). O convite continua tendo bloco central, filetes e data; ele só
+ * não afirma mais nada.
  */
 
-import { makeRng, range, pick } from '../../core/rng.js';
+import { makeRng, range } from '../../core/rng.js';
 import { roundedRect } from '../shapes.js';
+import { inkHeight, inkLine, inkWords, inkArc } from './ink.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
-const SERIF = "'Fraunces', Georgia, serif";
-const SANS = "'Inter', system-ui, sans-serif";
-
-/** Abaixo disto o texto vira borrão numa prévia a 26% e não paga o que custa. */
-const MIN_TEXT_MM = 1.6;
-
-const MESES = [
-  'JANEIRO', 'FEVEREIRO', 'MARÇO', 'ABRIL', 'MAIO', 'JUNHO',
-  'JULHO', 'AGOSTO', 'SETEMBRO', 'OUTUBRO', 'NOVEMBRO', 'DEZEMBRO',
-];
-const MESES_ABR = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
-
-const VOTOS = ['Para sempre', 'O nosso sim', 'Nosso dia', 'Só nós dois'];
-const LEGENDAS = ['nós dois', 'o nosso lugar', 'sempre assim', 'aquele domingo', 'em casa'];
-const BILHETES = ['guarde isto', 'volto logo', 'penso em você', 'até já'];
+/** Abaixo disto a marca vira borrão numa prévia a 26% e não paga o que custa. */
+const MIN_MARK_MM = 1.6;
 
 /* ---------------------------------------------------------------- cor ----- */
 
@@ -86,80 +79,19 @@ function dot(ctx, cx, cy, r) {
   ctx.fill();
 }
 
-/* --------------------------------------------------------------- texto ---- */
+/* --------------------------------------------------------------- marca ---- */
 
-function setFont(ctx, sizeMm, pxPerMm, family, weight = 400) {
-  ctx.font = `${weight} ${sizeMm * pxPerMm}px ${family}`;
-}
-
-function trackedWidth(ctx, text, spacing) {
-  let total = 0;
-  for (const ch of text) total += ctx.measureText(ch).width + spacing;
-  return total - spacing;
-}
-
-/** Espaçamento de letra na unha: `ctx.letterSpacing` ainda falta em navegador demais. */
-function drawTracked(ctx, text, cx, y, spacing) {
-  const total = trackedWidth(ctx, text, spacing);
-  const prev = ctx.textAlign;
-  ctx.textAlign = 'left';
-  let x = cx - total / 2;
-  for (const ch of text) {
-    ctx.fillText(ch, x, y);
-    x += ctx.measureText(ch).width + spacing;
-  }
-  ctx.textAlign = prev;
-  return total;
-}
-
-/** Encolhe até caber; devolve `false` se só couber abaixo do mínimo legível. */
-function fitTracked(ctx, text, cx, y, maxW, sizeMm, pxPerMm, family, weight, em) {
-  let size = sizeMm;
-  while (size >= MIN_TEXT_MM) {
-    setFont(ctx, size, pxPerMm, family, weight);
-    const spacing = size * pxPerMm * em;
-    if (trackedWidth(ctx, text, spacing) <= maxW) {
-      drawTracked(ctx, text, cx, y, spacing);
-      return true;
-    }
-    size *= 0.9;
-  }
-  return false;
-}
-
-function fitPlain(ctx, text, cx, y, maxW, sizeMm, pxPerMm, family, weight) {
-  let size = sizeMm;
-  while (size >= MIN_TEXT_MM) {
-    setFont(ctx, size, pxPerMm, family, weight);
-    if (ctx.measureText(text).width <= maxW) {
-      const prev = ctx.textAlign;
-      ctx.textAlign = 'center';
-      ctx.fillText(text, cx, y);
-      ctx.textAlign = prev;
-      return ctx.measureText(text).width;
-    }
-    size *= 0.9;
-  }
-  return 0;
-}
-
-/** Letra a letra sobre a polilinha, cada uma girada pela tangente local. */
-function textOnPath(ctx, text, pts, spacing, centreLen) {
-  const acc = cumulative(pts);
-  let s = centreLen - trackedWidth(ctx, text, spacing) / 2;
-  const prev = ctx.textAlign;
-  ctx.textAlign = 'left';
-  for (const ch of text) {
-    const cw = ctx.measureText(ch).width;
-    const at = sampleAt(pts, acc, s + cw / 2);
-    ctx.save();
-    ctx.translate(at.x, at.y);
-    ctx.rotate(at.angle);
-    ctx.fillText(ch, -cw / 2, 0);
-    ctx.restore();
-    s += cw + spacing;
-  }
-  ctx.textAlign = prev;
+/**
+ * A marca de uma linha impressa. Sem texto não há o que medir, então a largura
+ * vem de `ratio`: quantos corpos de tipo a linha ocuparia se fosse composta. É
+ * ele que preserva a proporção entre um olho miúdo e o bloco central da peça.
+ *
+ * Devolve a largura desenhada, 0 quando a linha é pequena demais para aparecer.
+ */
+function markLine(ctx, cx, y, maxW, sizeMm, pxPerMm, ratio, parts = 0, seed = 1, align = 'center') {
+  if (!(sizeMm >= MIN_MARK_MM)) return 0;
+  const w = Math.min(maxW, sizeMm * pxPerMm * ratio);
+  return inkWords(ctx, cx, y, w, inkHeight(sizeMm, pxPerMm), align, parts, seed);
 }
 
 /* ------------------------------------------------------------ contorno ---- */
@@ -269,15 +201,6 @@ function ellipsePoints(rx, ry, steps = 240) {
   return pts;
 }
 
-function ellipseArc(rx, ry, a0, a1, steps = 120) {
-  const pts = [];
-  for (let i = 0; i <= steps; i++) {
-    const a = a0 + (a1 - a0) * (i / steps);
-    pts.push({ x: Math.cos(a) * rx, y: Math.sin(a) * ry });
-  }
-  return pts;
-}
-
 function pathFrom(pts, cx = 0, cy = 0) {
   const p = new Path2D();
   pts.forEach((pt, i) => {
@@ -310,14 +233,6 @@ function archRect(x, y, w, h, r) {
   p.lineTo(x + w, y + h);
   p.closePath();
   return p;
-}
-
-function seededDate(rng) {
-  return {
-    dia: 1 + Math.floor(rng() * 28),
-    mes: Math.floor(rng() * 12),
-    ano: 2027 + Math.floor(rng() * 3),
-  };
 }
 
 /* -------------------------------------------------------------- estilos --- */
@@ -354,13 +269,11 @@ function paintConvite(ctx, { pxPerMm, tone, seed, w, h }, L) {
   const mm = (v) => v * pxPerMm;
   const hw = mm(w) / 2;
   const hh = mm(h) / 2;
-  const rng = makeRng((seed ^ 0x1f0a5537) >>> 0);
   const ink = shade(tone, 0.72, 0.9);
   const faint = shade(tone, 0.6, 0.5);
 
   ctx.save();
   ctx.lineJoin = 'miter';
-  ctx.textBaseline = 'middle';
 
   const off = mm(L.margin * 0.4);
   const gap = mm(clamp(L.margin * 0.16, 0.45, 1.5));
@@ -390,13 +303,14 @@ function paintConvite(ctx, { pxPerMm, tone, seed, w, h }, L) {
   const content = bottom - top;
   const contentMm = content / pxPerMm;
   const maxW = L.box.w;
-  if (contentMm < MIN_TEXT_MM * 2) {
+  if (contentMm < MIN_MARK_MM * 2) {
     ctx.restore();
     return;
   }
 
+  // Olho miúdo espaçado, no lugar onde ia a chamada do convite.
   ctx.fillStyle = ink;
-  fitTracked(ctx, 'CONVITE', 0, top + content * 0.14, maxW, clamp(contentMm * 0.11, 0, 3.2), pxPerMm, SANS, 500, 0.42);
+  markLine(ctx, 0, top + content * 0.14, maxW, clamp(contentMm * 0.11, 0, 3.2), pxPerMm, 6.9, 2, seed);
 
   const divY = top + content * 0.33;
   const arm = Math.min(maxW * 0.3, mm(18));
@@ -406,22 +320,12 @@ function paintConvite(ctx, { pxPerMm, tone, seed, w, h }, L) {
   ctx.fillStyle = ink;
   diamond(ctx, 0, divY, mm(clamp(contentMm * 0.035, 0.4, 1.1)));
 
-  fitPlain(ctx, pick(rng, VOTOS), 0, top + content * 0.6, maxW * 0.94, clamp(contentMm * 0.33, 0, 12), pxPerMm, SERIF, 600);
+  // Bloco central: duas marcas grandes, o peso que o serifado tinha.
+  markLine(ctx, 0, top + content * 0.6, maxW * 0.94, clamp(contentMm * 0.33, 0, 12), pxPerMm, 5.2, 2, (seed ^ 0x51) >>> 0);
 
-  const d = seededDate(rng);
+  // Linha da data: quatro marcas curtas, o ritmo de dia-mês-ano.
   ctx.fillStyle = shade(tone, 0.62, 0.85);
-  fitTracked(
-    ctx,
-    `${d.dia} DE ${MESES[d.mes]} DE ${d.ano}`,
-    0,
-    top + content * 0.88,
-    maxW,
-    clamp(contentMm * 0.1, 0, 2.8),
-    pxPerMm,
-    SANS,
-    400,
-    0.2
-  );
+  markLine(ctx, 0, top + content * 0.88, maxW * 0.86, clamp(contentMm * 0.1, 0, 2.8), pxPerMm, 13, 4, (seed ^ 0xa3) >>> 0);
 
   ctx.restore();
 }
@@ -491,18 +395,16 @@ function paintEnvelope(ctx, { pxPerMm, tone, seed, w, h }, L) {
   const flapY = hh - mm(L.pocketMm * 0.2);
   hairline(ctx, -hw + mm(1.6), flapY, hw - mm(1.6), flapY, mm(0.14), faint);
 
-  const pocketMid = L.pocketTop + mm(L.pocketMm);
-  const textMax = mm(w * 0.7);
-  ctx.textBaseline = 'middle';
+  // Marca do destinatário sobre o filete: é ela que faz o bolso virar envelope.
+  const markMax = mm(w * 0.7);
   ctx.fillStyle = ink;
   const nameSize = clamp(L.pocketMm * 0.24, 0, 7);
   const nameY = L.pocketTop + mm(L.pocketMm * 0.56);
-  const drew = fitPlain(ctx, 'Para você', 0, nameY, textMax, nameSize, pxPerMm, SERIF, 500);
+  const drew = markLine(ctx, 0, nameY, markMax, nameSize, pxPerMm, 4.6, 2, seed);
   if (drew > 0) {
-    const rule = Math.min(textMax, drew * 1.5);
+    const rule = Math.min(markMax, drew * 1.5);
     hairline(ctx, -rule / 2, nameY + mm(nameSize * 0.85), rule / 2, nameY + mm(nameSize * 0.85), mm(0.16), faint);
   }
-  void pocketMid;
 
   drawSeal(ctx, 0, L.pocketTop, mm(clamp(minSide * 0.1, 2.2, 9)), rng);
 
@@ -629,7 +531,7 @@ const instantanea = {
   },
 };
 
-function paintInstantanea(ctx, { pxPerMm, tone, seed, w, h }, L) {
+function paintInstantanea(ctx, { pxPerMm, tone, seed, h }, L) {
   const mm = (v) => v * pxPerMm;
   const hh = mm(h) / 2;
   const rng = makeRng((seed ^ 0x3ba91d05) >>> 0);
@@ -640,17 +542,16 @@ function paintInstantanea(ctx, { pxPerMm, tone, seed, w, h }, L) {
   const span = bottom - top;
   const spanMm = span / pxPerMm;
   const maxW = L.box.w * 0.94;
-  if (spanMm < MIN_TEXT_MM * 1.6) return;
+  if (spanMm < MIN_MARK_MM * 1.6) return;
 
   ctx.save();
-  ctx.textBaseline = 'middle';
   ctx.fillStyle = ink;
 
   ctx.save();
   ctx.translate(0, top + span * 0.42);
   ctx.rotate(range(rng, -1.6, 1.6) * (Math.PI / 180));
   const capMm = clamp(spanMm * 0.42, 0, 9);
-  const capW = fitPlain(ctx, pick(rng, LEGENDAS), 0, 0, maxW, capMm, pxPerMm, SERIF, 500);
+  const capW = markLine(ctx, 0, 0, maxW, capMm, pxPerMm, 5, 2, seed);
   if (capW > 0) {
     // Sublinhado de caneta: uma quadrática levemente torta, nunca uma reta.
     ctx.beginPath();
@@ -663,22 +564,18 @@ function paintInstantanea(ctx, { pxPerMm, tone, seed, w, h }, L) {
   }
   ctx.restore();
 
-  const d = seededDate(rng);
   const dateMm = clamp(spanMm * 0.16, 0, 2.8);
-  if (dateMm >= MIN_TEXT_MM) {
+  if (dateMm >= MIN_MARK_MM) {
     const y = top + span * 0.82;
     ctx.fillStyle = shade(tone, 0.55, 0.7);
-    setFont(ctx, dateMm, pxPerMm, SANS, 500);
-    const label = `${d.dia} DE ${MESES_ABR[d.mes]}`;
-    const spacing = dateMm * pxPerMm * 0.2;
-    const tw = trackedWidth(ctx, label, spacing);
-    const mark = mm(dateMm * 0.6);
-    ctx.fill(pathFrom(heartPoints(mark, mark * 0.92, 80), -tw / 2 - mark * 1.8, y));
-    drawTracked(ctx, label, mark * 0.9, y, spacing);
+    const runW = Math.min(maxW * 0.7, mm(dateMm * 7.4));
+    const heart = mm(dateMm * 0.6);
+    // O coração vem antes da marca, como um marcador de margem à esquerda dela.
+    ctx.fill(pathFrom(heartPoints(heart, heart * 0.92, 80), -runW / 2 - heart * 1.8, y));
+    inkWords(ctx, heart * 0.9, y, runW, inkHeight(dateMm, pxPerMm), 'center', 3, seed);
   }
 
   ctx.restore();
-  void w;
 }
 
 const camafeu = {
@@ -723,15 +620,14 @@ function paintCamafeu(ctx, { pxPerMm, tone, w, h }, L) {
   outline(ctx, ellipsePath(L.rx + mm(1.3), L.ry + mm(1.3)), mm(0.12), ink);
 
   const engraveMm = clamp(L.ring * 0.3, 0, 3.4);
-  if (engraveMm >= MIN_TEXT_MM) {
+  if (engraveMm >= MIN_MARK_MM) {
     const arcRx = hw - mm(L.ring * 0.64);
     const arcRy = hh - mm(L.ring * 0.64);
-    const arc = ellipseArc(arcRx, arcRy, Math.PI, 0, 160);
+    // Banda gravada na metade de baixo do anel, centrada pelo próprio `inkArc`.
+    // A fração vem da largura que a gravação teria, senão a banda dá a volta toda.
+    const arcLen = (Math.PI * (arcRx + arcRy)) / 2;
     ctx.fillStyle = ink;
-    ctx.textBaseline = 'alphabetic';
-    setFont(ctx, engraveMm, pxPerMm, SANS, 500);
-    const acc = cumulative(arc);
-    textOnPath(ctx, 'PARA SEMPRE', arc, engraveMm * pxPerMm * 0.3, acc[acc.length - 1] / 2);
+    inkArc(ctx, arcRx, arcRy, 0, Math.PI, inkHeight(engraveMm, pxPerMm), 3, clamp(mm(engraveMm * 10) / arcLen, 0.12, 0.7));
   }
 
   ctx.restore();
@@ -762,10 +658,9 @@ const reserve = {
   },
 };
 
-function paintReserve(ctx, { pxPerMm, tone, seed, w, h }, L) {
+function paintReserve(ctx, { pxPerMm, tone, seed, h }, L) {
   const mm = (v) => v * pxPerMm;
   const hh = mm(h) / 2;
-  const rng = makeRng((seed ^ 0x5d3e0f11) >>> 0);
   const ink = shade(tone, 0.74, 0.92);
   const faint = shade(tone, 0.58, 0.45);
 
@@ -773,38 +668,31 @@ function paintReserve(ctx, { pxPerMm, tone, seed, w, h }, L) {
   const bottom = hh - mm(L.margin * 0.9);
   const span = bottom - top;
   const spanMm = span / pxPerMm;
-  if (spanMm < MIN_TEXT_MM * 2) return;
+  if (spanMm < MIN_MARK_MM * 2) return;
 
   ctx.save();
-  ctx.textBaseline = 'middle';
 
   const arm = Math.min(L.box.w * 0.16, mm(11));
   hairline(ctx, -arm, top + span * 0.08, arm, top + span * 0.08, mm(0.18), faint);
 
   ctx.fillStyle = shade(tone, 0.6, 0.85);
-  fitTracked(ctx, 'RESERVE A DATA', 0, top + span * 0.24, L.box.w, clamp(spanMm * 0.13, 0, 3), pxPerMm, SANS, 500, 0.34);
+  markLine(ctx, 0, top + span * 0.24, L.box.w, clamp(spanMm * 0.13, 0, 3), pxPerMm, 13, 3, seed);
 
-  const d = seededDate(rng);
-  const dia = String(d.dia).padStart(2, '0');
-  const mes = MESES_ABR[d.mes];
-  const ano = String(d.ano);
   const y = top + span * 0.66;
   const maxW = L.box.w;
 
+  // Marca grande do dia entre dois filetes, ladeada pelas marcas de mês e ano.
+  // As três encolhem juntas até a fila caber, como faziam quando eram texto.
   let dayMm = clamp(spanMm * 0.46, 0, 22);
   let sideMm = clamp(spanMm * 0.15, 0, 4);
   let layout = null;
-  while (dayMm >= MIN_TEXT_MM * 1.5) {
-    setFont(ctx, dayMm, pxPerMm, SERIF, 600);
-    const dayW = ctx.measureText(dia).width;
-    setFont(ctx, sideMm, pxPerMm, SANS, 500);
-    const sp = sideMm * pxPerMm * 0.24;
-    const mesW = trackedWidth(ctx, mes, sp);
-    const anoW = trackedWidth(ctx, ano, sp);
-    const gap = dayMm * pxPerMm * 0.42;
-    const total = dayW + gap * 4 + mesW + anoW;
-    if (total <= maxW) {
-      layout = { dayW, mesW, anoW, gap, sp, total };
+  while (dayMm >= MIN_MARK_MM * 1.5) {
+    const dayW = mm(dayMm * 1.15);
+    const mesW = mm(sideMm * 2.3);
+    const anoW = mm(sideMm * 3.2);
+    const gap = mm(dayMm * 0.42);
+    if (dayW + gap * 4 + mesW + anoW <= maxW) {
+      layout = { dayW, mesW, anoW, gap };
       break;
     }
     dayMm *= 0.9;
@@ -816,25 +704,21 @@ function paintReserve(ctx, { pxPerMm, tone, seed, w, h }, L) {
   }
 
   ctx.fillStyle = ink;
-  setFont(ctx, dayMm, pxPerMm, SERIF, 600);
-  ctx.textAlign = 'center';
-  ctx.fillText(dia, 0, y);
-  ctx.textAlign = 'left';
+  inkLine(ctx, 0, y, layout.dayW, inkHeight(dayMm, pxPerMm), 'center');
 
   const edge = layout.dayW / 2 + layout.gap;
   const half = mm(dayMm * 0.42);
   hairline(ctx, -edge, y - half, -edge, y + half, mm(0.16), faint);
   hairline(ctx, edge, y - half, edge, y + half, mm(0.16), faint);
 
-  if (sideMm >= MIN_TEXT_MM) {
+  if (sideMm >= MIN_MARK_MM) {
     ctx.fillStyle = shade(tone, 0.62, 0.85);
-    setFont(ctx, sideMm, pxPerMm, SANS, 500);
-    drawTracked(ctx, mes, -edge - layout.gap - layout.mesW / 2, y, layout.sp);
-    drawTracked(ctx, ano, edge + layout.gap + layout.anoW / 2, y, layout.sp);
+    const sideH = inkHeight(sideMm, pxPerMm);
+    inkLine(ctx, -edge - layout.gap - layout.mesW / 2, y, layout.mesW, sideH, 'center');
+    inkLine(ctx, edge + layout.gap + layout.anoW / 2, y, layout.anoW, sideH, 'center');
   }
 
   ctx.restore();
-  void w;
 }
 
 const bilhete = {
@@ -913,20 +797,22 @@ function paintBilhete(ctx, { pxPerMm, seed, w, h }, L) {
   }
 
   const noteMm = clamp(minSide * 0.075, 0, 7);
-  if (noteMm >= MIN_TEXT_MM) {
+  if (noteMm >= MIN_MARK_MM) {
     ctx.save();
-    ctx.textBaseline = 'alphabetic';
-    // Tinta branca com sombra própria é o que segura a legenda sobre qualquer foto.
+    // Tinta branca com sombra própria é o que segura a marca sobre qualquer foto.
     ctx.shadowColor = 'rgba(22,15,9,0.5)';
     ctx.shadowBlur = mm(0.9);
     ctx.shadowOffsetY = mm(0.25);
     ctx.fillStyle = 'rgba(255,252,246,0.94)';
     ctx.translate(-hw + mm(minSide * 0.075), hh - mm(minSide * 0.075));
     ctx.rotate(range(rng, -1.4, 1.4) * (Math.PI / 180));
-    setFont(ctx, noteMm, pxPerMm, SERIF, 500);
-    ctx.fillText(pick(rng, BILHETES), 0, 0);
-    const mark = mm(noteMm * 0.34);
-    ctx.fill(pathFrom(heartPoints(mark, mark * 0.92, 80), ctx.measureText(pick(rng, BILHETES)).width + mark * 2, -mark));
+    const noteW = Math.max(0, Math.min(mm(noteMm * 4.6), mm(w) - mm(minSide * 0.3)));
+    // A origem está na linha de base do bilhete: a marca sobe até a altura de x.
+    const drawn = inkWords(ctx, 0, -mm(noteMm * 0.25), noteW, inkHeight(noteMm, pxPerMm), 'left', 3, seed);
+    if (drawn > 0) {
+      const heart = mm(noteMm * 0.34);
+      ctx.fill(pathFrom(heartPoints(heart, heart * 0.92, 80), drawn + heart * 2, -heart));
+    }
     ctx.restore();
   }
 

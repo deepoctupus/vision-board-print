@@ -1,5 +1,6 @@
 import { makeRng, range, gaussian } from '../../core/rng.js';
 import { roundedRect } from '../shapes.js';
+import { inkHeight, inkWords } from './ink.js';
 
 /**
  * Conquista — carreira, dinheiro, estudo e metas materiais.
@@ -7,17 +8,18 @@ import { roundedRect } from '../shapes.js';
  * A foto não ganha uma moldura: ela é impressa no objeto que representa a meta.
  * O carro dos sonhos vira a estampa de uma cédula, a formatura vira o certificado
  * com selo em relevo, o cargo vira o crachá da empresa.
+ *
+ * O objeto não escreve nada. Ele não sabe quem está na foto nem o que foi
+ * conquistado, então onde ia uma linha de texto vai a **marca** daquela linha
+ * (ver `ink.js`): o certificado continua tendo título, o crachá continua tendo
+ * cabeçalho, e nada no papel afirma coisa alguma.
  */
 
 const TAU = Math.PI * 2;
 const DEG = Math.PI / 180;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
-const SANS = '"Inter", system-ui, sans-serif';
-const SERIF = '"Fraunces", Georgia, serif';
-const MONO = 'ui-monospace, monospace';
-
-// Abaixo disso o texto é só uma mancha na prévia a 26% e não paga o que custa.
+// Abaixo disso a linha é só uma mancha na prévia a 26% e não paga o que custa.
 const MIN_TEXT_MM = 1.6;
 
 /** Um traço de 0.06 mm existe na gráfica e some da tela; o piso o mantém visível. */
@@ -52,72 +54,44 @@ function shade(hex, amount, alpha = 1) {
   return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
 }
 
-/* ------------------------------------------------------------------ texto -- */
+/* ------------------------------------------------------------------ marca -- */
 
 /**
- * Texto com entreletra, medido glifo a glifo: `ctx.letterSpacing` ainda falta em
- * navegadores que a gráfica pode estar usando. `track` é fração do corpo.
- * Devolve a largura ocupada em px, ou 0 quando o corpo ficou pequeno demais.
+ * A marca de uma linha de texto, no lugar exato onde a linha estaria.
+ *
+ * `mm` é o corpo que a linha teria (e é ele que decide a espessura da barra),
+ * `wMm` a largura que ela ocuparia, `units` quantas palavras ela aparentava
+ * ter. `hMm` força a espessura quando a peça precisa de peso — é o caso do
+ * carimbo, que sem a batida no meio vira um retângulo vazio.
+ *
+ * Devolve a largura usada em px, ou 0 quando o corpo ficou pequeno demais: é
+ * esse 0 que faz o chamador desistir dos arremates presos à linha.
  */
-function label(ctx, str, o) {
+function mark(ctx, o) {
   const px = o.pxPerMm;
-  let size = o.mm;
-  if (!(size >= MIN_TEXT_MM)) return 0;
+  if (!(o.mm >= MIN_TEXT_MM)) return 0;
 
-  const family = o.family || SANS;
-  const weight = o.weight ?? 600;
-  const track = o.track || 0;
-  const chars = String(str).split('');
+  const w = Math.min(o.wMm, o.maxMm ?? o.wMm) * px;
+  const h = o.hMm ? hair(o.hMm, px, 0.5) : inkHeight(o.mm, px);
+  if (!(w > 0) || !(h > 0)) return 0;
 
-  const measure = (mm) => {
-    ctx.font = `${weight} ${mm * px}px ${family}`;
-    const ws = chars.map((c) => ctx.measureText(c).width);
-    const sum = ws.reduce((a, b) => a + b, 0);
-    return { ws, total: sum + track * mm * px * Math.max(0, chars.length - 1) };
-  };
-
-  ctx.save();
-  let m = measure(size);
-  if (o.maxMm && m.total > o.maxMm * px) {
-    size *= (o.maxMm * px) / m.total;
-    if (!(size >= MIN_TEXT_MM)) {
-      ctx.restore();
-      return 0;
-    }
-    m = measure(size);
-  }
-
-  const body = size * px;
   const align = o.align || 'center';
-  let x = align === 'center' ? o.x - m.total / 2 : align === 'right' ? o.x - m.total : o.x;
+  ctx.save();
 
   if (o.plate) {
+    const body = o.mm * px;
     const padX = body * 0.4;
     const padY = body * 0.36;
+    const x0 = align === 'center' ? o.x - w / 2 : align === 'right' ? o.x - w : o.x;
     ctx.fillStyle = o.plate;
-    ctx.fill(roundedRect(x - padX, o.y - body * 0.62 - padY, m.total + padX * 2, body * 1.24 + padY * 2, body * 0.22));
+    ctx.fill(roundedRect(x0 - padX, o.y - body * 0.62 - padY, w + padX * 2, body * 1.24 + padY * 2, body * 0.22));
   }
 
   ctx.globalAlpha *= o.alpha ?? 1;
   ctx.fillStyle = o.color || '#1c1a17';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  for (let i = 0; i < chars.length; i++) {
-    ctx.fillText(chars[i], x, o.y);
-    x += m.ws[i] + track * body;
-  }
+  inkWords(ctx, o.x, o.y, w, h, align, o.units ?? 0, o.seed ?? 1);
   ctx.restore();
-  return m.total;
-}
-
-const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-
-function serialCode(rng, letters, digits) {
-  let out = '';
-  for (let i = 0; i < letters; i++) out += ALPHA[Math.floor(rng() * ALPHA.length) % ALPHA.length];
-  if (letters) out += ' ';
-  for (let i = 0; i < digits; i++) out += Math.floor(rng() * 10);
-  return out;
+  return w;
 }
 
 /* --------------------------------------------------------------- gravuras -- */
@@ -255,13 +229,6 @@ function doubleRule(ctx, x, y, w, h, gap, o) {
 
 /* --------------------------------------------------------------- cédula --- */
 
-const NOTES = [
-  { n: '100', words: 'CEM REAIS' },
-  { n: '200', words: 'DUZENTOS REAIS' },
-  { n: '500', words: 'QUINHENTOS REAIS' },
-  { n: '1.000', words: 'MIL REAIS' },
-];
-
 const cedula = {
   id: 'c-cedula',
   label: 'Cédula',
@@ -278,9 +245,11 @@ const cedula = {
     const box = { x: -hw + band, y: -hh + band, w: hw * 2 - band * 2, h: hh * 2 - band * 2 };
     const photo = roundedRect(box.x, box.y, box.w, box.h, mm(0.35));
 
+    // Quantas palavras cada linha aparenta ter. Sem valor escrito, é o que
+    // impede uma cédula de sair idêntica à outra.
     const pick = makeRng((seed ^ 0x9e3f11a7) >>> 0);
-    const note = oneOf(pick, NOTES);
-    const serial = serialCode(pick, 2, 8);
+    const bankUnits = 2 + Math.floor(pick() * 2);
+    const wordUnits = 2 + Math.floor(pick() * 2);
 
     return {
       paper,
@@ -334,13 +303,13 @@ const cedula = {
           }
         }
 
-        label(ctx, 'BANCO DOS SONHOS', {
-          x: 0, y: -hh + band * 0.5, mm: bandMm * 0.4, pxPerMm: px,
-          family: SERIF, weight: 700, track: 0.16, color: ink, maxMm: w - bandMm * 3.2,
+        mark(ctx, {
+          x: 0, y: -hh + band * 0.5, mm: bandMm * 0.4, wMm: bandMm * 0.4 * 12, pxPerMm: px,
+          units: bankUnits, color: ink, maxMm: w - bandMm * 3.2,
         });
-        label(ctx, note.words, {
-          x: 0, y: hh - band * 0.5, mm: bandMm * 0.34, pxPerMm: px,
-          family: SANS, weight: 600, track: 0.22, color: ink, maxMm: w - bandMm * 3.2,
+        mark(ctx, {
+          x: 0, y: hh - band * 0.5, mm: bandMm * 0.34, wMm: bandMm * 0.34 * 10, pxPerMm: px,
+          units: wordUnits, color: ink, maxMm: w - bandMm * 3.2, seed: 0x3d71,
         });
 
         // Marca d'água sobre a foto: um par claro/escuro deslocado, para
@@ -360,19 +329,26 @@ const cedula = {
         const plate = shade(tone, -0.12, 0.84);
         for (const sx of [-1, 1]) {
           for (const sy of [-1, 1]) {
-            label(ctx, `R$ ${note.n}`, {
-              x: sx < 0 ? box.x + pad : box.x + box.w - pad,
-              y: sy < 0 ? box.y + pad : box.y + box.h - pad,
-              mm: valueMm, pxPerMm: px, family: SERIF, weight: 700,
+            // Desenhadas na origem e transladadas: as barras nascem do mesmo
+            // sorteio e os quatro cantos marcam o mesmo valor, como na cédula.
+            ctx.save();
+            ctx.translate(
+              sx < 0 ? box.x + pad : box.x + box.w - pad,
+              sy < 0 ? box.y + pad : box.y + box.h - pad,
+            );
+            mark(ctx, {
+              x: 0, y: 0, mm: valueMm, wMm: valueMm * 4.4, pxPerMm: px, units: 2,
               align: sx < 0 ? 'left' : 'right', color: ink, plate, maxMm: w * 0.3,
             });
+            ctx.restore();
           }
         }
 
-        label(ctx, serial, {
+        const serialMm = clamp(valueMm * 0.5, 1.6, 3.4);
+        mark(ctx, {
           x: box.x + box.w * 0.5, y: box.y + box.h - mm(valueMm * 0.7),
-          mm: clamp(valueMm * 0.5, 1.6, 3.4), pxPerMm: px,
-          family: MONO, weight: 500, track: 0.12, color: ink, plate, maxMm: w * 0.44,
+          mm: serialMm, wMm: serialMm * 8, pxPerMm: px,
+          units: 2, color: ink, plate, maxMm: w * 0.44, seed: 0x5c19,
         });
 
         ctx.restore();
@@ -448,9 +424,9 @@ const certificado = {
         }
 
         const titleY = -hh + mm(topMm) * 0.46;
-        const drawn = label(ctx, 'CERTIFICADO', {
-          x: 0, y: titleY, mm: topMm * 0.5, pxPerMm: px,
-          family: SERIF, weight: 700, track: 0.2, color: ink, maxMm: w - sideMm * 2.4,
+        const drawn = mark(ctx, {
+          x: 0, y: titleY, mm: topMm * 0.5, wMm: topMm * 0.5 * 9, pxPerMm: px,
+          units: 1, color: ink, maxMm: w - sideMm * 2.4,
         });
 
         if (drawn) {
@@ -505,17 +481,20 @@ const certificado = {
           const lineY = footTop + mm(footMm) * 0.58;
           ctx.strokeStyle = ink;
           ctx.lineWidth = hair(0.16, px);
-          ['Diretoria', 'Data'].forEach((caption, i) => {
+          // Duas linhas de assinatura, cada uma com a legenda miúda embaixo: é
+          // esse par que faz o pé do diploma parecer assinado.
+          for (let i = 0; i < 2; i++) {
             const x0 = linesLeft + (colW + gapPx) * i;
             ctx.beginPath();
             ctx.moveTo(x0, lineY);
             ctx.lineTo(x0 + colW, lineY);
             ctx.stroke();
-            label(ctx, caption, {
-              x: x0 + colW / 2, y: lineY + mm(footMm) * 0.22, mm: footMm * 0.18, pxPerMm: px,
-              family: SANS, weight: 500, track: 0.08, color: soft, maxMm: colW / px,
+            mark(ctx, {
+              x: x0 + colW / 2, y: lineY + mm(footMm) * 0.22, mm: footMm * 0.18,
+              wMm: (colW / px) * 0.42, pxPerMm: px, units: 1, color: soft,
+              maxMm: colW / px, seed: 0x21b5 + i * 613,
             });
-          });
+          }
         }
 
         ctx.restore();
@@ -560,7 +539,6 @@ const cracha = {
 
     const pick = makeRng((seed ^ 0x7b31d90f) >>> 0);
     const accent = oneOf(pick, BADGE_INKS);
-    const serial = `Nº ${serialCode(pick, 0, 6)}`;
 
     return {
       paper,
@@ -591,26 +569,26 @@ const cracha = {
         ctx.stroke(slot);
         ctx.restore();
 
-        label(ctx, 'CREDENCIAL', {
-          x: 0, y: -hh + mm(headMm) * 0.79, mm: headMm * 0.27, pxPerMm: px,
-          family: SANS, weight: 700, track: 0.28, color: 'rgba(255,255,255,0.94)',
-          maxMm: w * 0.7,
+        // Vazada na faixa de cor, como o nome da empresa era.
+        mark(ctx, {
+          x: 0, y: -hh + mm(headMm) * 0.79, mm: headMm * 0.27, wMm: headMm * 0.27 * 9,
+          pxPerMm: px, units: 1, color: 'rgba(255,255,255,0.94)', maxMm: w * 0.7,
         });
 
         const footTop = hh - mm(footMm);
         const barH = mm(footMm) * 0.44;
         const barW = Math.min(hw * 1.3, mm(w * 0.62));
         barcode(ctx, -barW / 2, footTop + mm(footMm) * 0.16, barW, barH, rng, shade(tone, 0.82, 1), px);
-        label(ctx, serial, {
-          x: 0, y: footTop + mm(footMm) * 0.8, mm: footMm * 0.28, pxPerMm: px,
-          family: MONO, weight: 500, track: 0.1, color: shade(tone, 0.6, 1), maxMm: w * 0.6,
+        mark(ctx, {
+          x: 0, y: footTop + mm(footMm) * 0.8, mm: footMm * 0.28, wMm: footMm * 0.28 * 7,
+          pxPerMm: px, units: 2, color: shade(tone, 0.6, 1), maxMm: w * 0.6, seed: 0x2b47,
         });
 
-        label(ctx, 'ACESSO TOTAL', {
+        const tagMm = clamp(minSide * 0.055, 1.6, 3.4);
+        mark(ctx, {
           x: box.x + mm(clamp(w * 0.03, 0.8, 3)),
           y: box.y + box.h - mm(clamp(h * 0.04, 1, 4)),
-          mm: clamp(minSide * 0.055, 1.6, 3.4), pxPerMm: px,
-          family: SANS, weight: 700, track: 0.16, align: 'left',
+          mm: tagMm, wMm: tagMm * 8, pxPerMm: px, units: 2, align: 'left',
           color: 'rgba(255,255,255,0.96)', plate: shade(accent, -0.06, 0.92), maxMm: w * 0.62,
         });
 
@@ -621,13 +599,6 @@ const cracha = {
 };
 
 /* ------------------------------------------------------- capa de revista -- */
-
-const MASTHEADS = ['FORTUNA', 'VITÓRIA', 'CONQUISTA', 'ASCENSÃO'];
-const COVER_LINES = [
-  ['O ANO DA VIRADA', 'como eu cheguei lá'],
-  ['DE ZERO A TUDO', 'a rotina que mudou o jogo'],
-  ['A META BATIDA', 'o plano que ninguém viu'],
-];
 
 const revista = {
   id: 'c-revista',
@@ -640,10 +611,11 @@ const revista = {
     const box = { x: -hw, y: -hh, w: hw * 2, h: hh * 2 };
     const paper = roundedRect(box.x, box.y, box.w, box.h, mm(0.6));
 
+    // Quantas palavras a chamada e a linha de apoio aparentam ter — a única
+    // variação que resta entre uma capa e outra sem manchete escrita.
     const pick = makeRng((seed ^ 0x6ac1f337) >>> 0);
-    const name = oneOf(pick, MASTHEADS);
-    const lines = oneOf(pick, COVER_LINES);
-    const issue = 3 + Math.floor(pick() * 20);
+    const leadUnits = 2 + Math.floor(pick() * 2);
+    const subUnits = 3 + Math.floor(pick() * 2);
 
     return {
       paper,
@@ -669,19 +641,24 @@ const revista = {
         ctx.fillStyle = botScrim;
         ctx.fillRect(-hw, hh - hh * 0.95, hw * 2, hh * 0.95);
 
-        const headMm = clamp(w * 0.2, 3.2, 34);
+        // O logotipo sempre atravessou a capa de ponta a ponta, então aqui é a
+        // largura que decide o corpo — e não o contrário, senão em capa larga a
+        // barra vira uma tarja alta demais.
+        const headW = w - padMm * 2;
+        const headMm = Math.min(clamp(w * 0.2, 3.2, 34), headW / 5.4);
         ctx.save();
         ctx.shadowColor = 'rgba(0,0,0,0.4)';
         ctx.shadowBlur = mm(0.8);
-        label(ctx, name, {
-          x: 0, y: -hh + pad + mm(headMm) * 0.5, mm: headMm, pxPerMm: px,
-          family: SERIF, weight: 800, track: -0.01, color: '#fff', maxMm: w - padMm * 2,
+        mark(ctx, {
+          x: 0, y: -hh + pad + mm(headMm) * 0.5, mm: headMm, wMm: headW * 0.94,
+          pxPerMm: px, units: 1, color: '#fff',
         });
         ctx.restore();
 
-        label(ctx, `EDIÇÃO Nº ${issue} · MARÇO 2026`, {
-          x: 0, y: -hh + pad + mm(headMm) * 1.16, mm: clamp(w * 0.034, 1.6, 3.6), pxPerMm: px,
-          family: SANS, weight: 600, track: 0.24, color: 'rgba(255,255,255,0.86)', maxMm: w * 0.8,
+        mark(ctx, {
+          x: 0, y: -hh + pad + mm(headMm) * 1.16, mm: clamp(w * 0.034, 1.6, 3.6),
+          wMm: w * 0.46, pxPerMm: px, units: 3,
+          color: 'rgba(255,255,255,0.86)', maxMm: w * 0.8,
         });
 
         const codeMm = clamp(Math.min(w, h) * 0.13, 4, 16);
@@ -691,10 +668,11 @@ const revista = {
         ctx.fillStyle = 'rgba(255,255,255,0.92)';
         ctx.fill(roundedRect(-hw + pad, codeY, codeW, codeH, mm(0.4)));
         barcode(ctx, -hw + pad + mm(0.5), codeY + mm(0.5), codeW - mm(1), codeH - mm(1), rng, '#16130f', px);
-        label(ctx, 'R$ 24,90', {
+        const priceMm = clamp(w * 0.032, 1.6, 3.4);
+        mark(ctx, {
           x: -hw + pad + codeW + mm(1.2), y: codeY + codeH * 0.5,
-          mm: clamp(w * 0.032, 1.6, 3.4), pxPerMm: px,
-          family: SANS, weight: 600, align: 'left', color: 'rgba(255,255,255,0.9)', maxMm: w * 0.3,
+          mm: priceMm, wMm: priceMm * 4.4, pxPerMm: px, units: 2, align: 'left',
+          color: 'rgba(255,255,255,0.9)', maxMm: w * 0.3,
         });
 
         const leadMm = clamp(w * 0.068, 1.8, 9);
@@ -704,14 +682,14 @@ const revista = {
         ctx.fillStyle = accent;
         ctx.fillRect(barX, leadY - mm(leadMm) * 0.72, mm(clamp(w * 0.012, 0.4, 1.6)), mm(leadMm) * 1.5);
         const textX = barX + mm(clamp(w * 0.012, 0.4, 1.6)) + mm(clamp(w * 0.02, 0.6, 2.4));
-        label(ctx, lines[0], {
-          x: textX, y: leadY, mm: leadMm, pxPerMm: px,
-          family: SANS, weight: 800, align: 'left', track: -0.01, color: '#fff', maxMm: w * 0.62,
+        mark(ctx, {
+          x: textX, y: leadY, mm: leadMm, wMm: leadMm * 9, pxPerMm: px,
+          units: leadUnits, align: 'left', color: '#fff', maxMm: w * 0.62,
         });
-        label(ctx, lines[1], {
-          x: textX, y: leadY + mm(leadMm) * 0.92, mm: subMm, pxPerMm: px,
-          family: SERIF, weight: 'italic 500', align: 'left', color: 'rgba(255,255,255,0.88)',
-          maxMm: w * 0.6,
+        mark(ctx, {
+          x: textX, y: leadY + mm(leadMm) * 0.92, mm: subMm, wMm: subMm * 13, pxPerMm: px,
+          units: subUnits, align: 'left', color: 'rgba(255,255,255,0.88)',
+          maxMm: w * 0.6, seed: 0x7f2d,
         });
 
         const badgeR = mm(clamp(Math.min(w, h) * 0.14, 3.6, 15));
@@ -729,13 +707,13 @@ const revista = {
         ctx.beginPath();
         ctx.arc(0, 0, badgeR * 0.86, 0, TAU);
         ctx.stroke();
-        label(ctx, 'ESPECIAL', {
-          x: 0, y: -badgeR * 0.24, mm: (badgeR / px) * 0.3, pxPerMm: px,
-          family: SANS, weight: 800, track: 0.06, color: '#fff', maxMm: (badgeR / px) * 1.5,
+        mark(ctx, {
+          x: 0, y: -badgeR * 0.24, mm: (badgeR / px) * 0.3, wMm: (badgeR / px) * 1.16,
+          pxPerMm: px, units: 1, color: '#fff', maxMm: (badgeR / px) * 1.5,
         });
-        label(ctx, 'METAS', {
-          x: 0, y: badgeR * 0.3, mm: (badgeR / px) * 0.38, pxPerMm: px,
-          family: SERIF, weight: 800, color: '#fff', maxMm: (badgeR / px) * 1.5,
+        mark(ctx, {
+          x: 0, y: badgeR * 0.3, mm: (badgeR / px) * 0.38, wMm: (badgeR / px) * 0.98,
+          pxPerMm: px, units: 1, color: '#fff', maxMm: (badgeR / px) * 1.5,
         });
         ctx.restore();
 
@@ -755,8 +733,6 @@ const METALS = [
   { hi: '#f4f6f8', mid: '#b6bec6', lo: '#767e86' },
   { hi: '#f2d8ba', mid: '#b47a45', lo: '#6f4522' },
 ];
-const ENGRAVINGS = ['CONQUISTA', 'REALIZADO', 'META BATIDA'];
-
 const placa = {
   id: 'c-placa',
   label: 'Placa gravada',
@@ -781,7 +757,7 @@ const placa = {
 
     const pick = makeRng((seed ^ 0x5d0aa93b) >>> 0);
     const metal = oneOf(pick, METALS);
-    const word = oneOf(pick, ENGRAVINGS);
+    const engraveUnits = 1 + Math.floor(pick() * 2);
 
     return {
       paper,
@@ -871,18 +847,22 @@ const placa = {
           }
         }
 
-        // Gravação a baixo relevo: cópia clara meio fio acima da escura.
+        // Gravação a baixo relevo: cópia clara meio fio acima da escura. As
+        // duas saem do mesmo desenho e é o contexto que desloca — a marca é
+        // sorteada a partir da posição, e a olho nu duas posições dariam duas
+        // gravações diferentes em vez de relevo.
         const engraveY = hh - mm(footMm) * 0.5;
         const engraveMm = clamp(footMm * 0.36, 1.6, 9);
         const wide = w - edgeMm * 3.2;
-        label(ctx, word, {
-          x: 0, y: engraveY - hair(0.14, px), mm: engraveMm, pxPerMm: px,
-          family: SERIF, weight: 700, track: 0.26, color: 'rgba(255,255,255,0.5)', maxMm: wide,
+        const engrave = (color) => mark(ctx, {
+          x: 0, y: engraveY, mm: engraveMm, wMm: engraveMm * 8.4, pxPerMm: px,
+          units: engraveUnits, color, maxMm: wide,
         });
-        label(ctx, word, {
-          x: 0, y: engraveY, mm: engraveMm, pxPerMm: px,
-          family: SERIF, weight: 700, track: 0.26, color: 'rgba(26,18,6,0.78)', maxMm: wide,
-        });
+        ctx.save();
+        ctx.translate(0, -hair(0.14, px));
+        engrave('rgba(255,255,255,0.5)');
+        ctx.restore();
+        engrave('rgba(26,18,6,0.78)');
 
         ctx.restore();
       },
@@ -924,7 +904,7 @@ const ticket = {
     const photo = roundedRect(box.x, box.y, box.w, box.h, mm(0.4));
 
     const pick = makeRng((seed ^ 0x0f7c2a55) >>> 0);
-    const serial = serialCode(pick, 1, 6);
+    const stubUnits = 2 + Math.floor(pick() * 2);
 
     return {
       paper,
@@ -978,13 +958,15 @@ const ticket = {
         ctx.translate(stubCx, stubCy);
         if (alongX) ctx.rotate(-90 * DEG);
         const ink = 'rgba(74,52,6,0.92)';
-        label(ctx, 'ADMITE UM', {
-          x: 0, y: -stub * 0.2, mm: clamp(stubMm * 0.24, 1.6, 5), pxPerMm: px,
-          family: SANS, weight: 800, track: 0.22, color: ink, maxMm: stubLen * 0.74,
+        const callMm = clamp(stubMm * 0.24, 1.6, 5);
+        const serialMm = clamp(stubMm * 0.17, 1.6, 3.6);
+        mark(ctx, {
+          x: 0, y: -stub * 0.2, mm: callMm, wMm: callMm * 7.6, pxPerMm: px,
+          units: stubUnits, color: ink, maxMm: stubLen * 0.74,
         });
-        label(ctx, serial, {
-          x: 0, y: stub * 0.22, mm: clamp(stubMm * 0.17, 1.6, 3.6), pxPerMm: px,
-          family: MONO, weight: 500, track: 0.08, color: ink, maxMm: stubLen * 0.7,
+        mark(ctx, {
+          x: 0, y: stub * 0.22, mm: serialMm, wMm: serialMm * 7, pxPerMm: px,
+          units: 2, color: ink, maxMm: stubLen * 0.7, seed: 0x64a1,
         });
         ctx.restore();
 
@@ -996,11 +978,12 @@ const ticket = {
           }
         }
 
-        label(ctx, 'VIP', {
+        // Etiqueta curta e grossa na quina da foto: uma sigla, não uma frase.
+        const tagMm = clamp(minSide * 0.09, 1.6, 6);
+        mark(ctx, {
           x: box.x + mm(clamp(minSide * 0.05, 1, 4)),
           y: box.y + mm(clamp(minSide * 0.06, 1.2, 5)),
-          mm: clamp(minSide * 0.09, 1.6, 6), pxPerMm: px,
-          family: SERIF, weight: 800, track: 0.12, align: 'left',
+          mm: tagMm, wMm: tagMm * 2.4, pxPerMm: px, units: 1, align: 'left',
           color: 'rgba(58,40,4,0.95)', plate: 'rgba(246,229,166,0.92)', maxMm: w * 0.3,
         });
 
@@ -1037,7 +1020,6 @@ const aprovado = {
 
     const pick = makeRng((seed ^ 0x63b8e011) >>> 0);
     const ink = oneOf(pick, STAMP_INKS);
-    const protocolo = `PROTOCOLO ${2026}/${serialCode(pick, 0, 4)}`;
     const tilt = range(pick, -15, -5);
 
     return {
@@ -1052,11 +1034,11 @@ const aprovado = {
         ctx.lineWidth = hair(0.14, px);
         ctx.stroke(photo);
 
-        label(ctx, protocolo, {
+        const protoMm = clamp(minSide * 0.045, 1.6, 3.2);
+        mark(ctx, {
           x: box.x + mm(clamp(minSide * 0.04, 0.8, 3.5)),
           y: box.y + mm(clamp(minSide * 0.05, 1, 4)),
-          mm: clamp(minSide * 0.045, 1.6, 3.2), pxPerMm: px,
-          family: MONO, weight: 500, track: 0.06, align: 'left',
+          mm: protoMm, wMm: protoMm * 8.4, pxPerMm: px, units: 2, align: 'left',
           color: shade(tone, 0.72, 1), plate: shade(tone, -0.1, 0.8), maxMm: w * 0.6,
         });
 
@@ -1087,14 +1069,17 @@ const aprovado = {
         ctx.stroke(roundedRect(-stampW / 2 + gap * 1.6, -stampH / 2 + gap * 1.6, stampW - gap * 3.2, stampH - gap * 3.2, mm(0.8)));
         ctx.setLineDash([]);
 
+        // O carimbo só existe pela batida no meio dele. Sem palavra, é o peso
+        // que segura o gesto: uma barra bem mais grossa que a marca de um texto
+        // comum, senão o contorno inclinado vira um retângulo vazio.
         const titleMm = (stampH / px) * 0.42;
-        label(ctx, 'APROVADO', {
-          x: 0, y: -stampH * 0.1, mm: titleMm, pxPerMm: px,
-          family: SANS, weight: 800, track: 0.14, color: ink, maxMm: (stampW / px) * 0.76,
+        mark(ctx, {
+          x: 0, y: -stampH * 0.1, mm: titleMm, hMm: (stampH / px) * 0.3,
+          wMm: (stampW / px) * 0.72, pxPerMm: px, units: 1, color: ink,
         });
-        label(ctx, 'META CONCLUÍDA · 2026', {
-          x: 0, y: stampH * 0.26, mm: (stampH / px) * 0.15, pxPerMm: px,
-          family: SANS, weight: 600, track: 0.16, color: ink, maxMm: (stampW / px) * 0.78,
+        mark(ctx, {
+          x: 0, y: stampH * 0.26, mm: (stampH / px) * 0.15,
+          wMm: (stampW / px) * 0.6, pxPerMm: px, units: 3, color: ink, seed: 0x2f8b,
         });
 
         // Respingos: a tinta que escapa da borda quando o carimbo bate forte.

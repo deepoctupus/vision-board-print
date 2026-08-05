@@ -6,34 +6,13 @@
 
 import { makeRng, range, pick } from '../../core/rng.js';
 import { roundedRect } from '../shapes.js';
+import { inkArc, inkField, inkHeight, inkLine, inkWords } from './ink.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
-const SERIF = "'Fraunces', Georgia, serif";
-const SANS = "'Inter', system-ui, sans-serif";
-
-/** Abaixo disto o texto vira borrão numa prévia a 26% e não paga o que custa. */
+/** Abaixo disto a marca vira sujeira numa prévia a 26% e não paga o que custa. */
 const MIN_TEXT_MM = 1.6;
-
-const MESES_ABR = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
-
-const DESTINOS = [
-  { nome: 'Lisboa', code: 'LIS', pais: 'Portugal' },
-  { nome: 'Paris', code: 'CDG', pais: 'França' },
-  { nome: 'Tóquio', code: 'HND', pais: 'Japão' },
-  { nome: 'Roma', code: 'FCO', pais: 'Itália' },
-  { nome: 'Cidade do Cabo', code: 'CPT', pais: 'África do Sul' },
-  { nome: 'Nova York', code: 'JFK', pais: 'Estados Unidos' },
-  { nome: 'Atenas', code: 'ATH', pais: 'Grécia' },
-  { nome: 'Marraquexe', code: 'RAK', pais: 'Marrocos' },
-  { nome: 'Quioto', code: 'KIX', pais: 'Japão' },
-  { nome: 'Buenos Aires', code: 'EZE', pais: 'Argentina' },
-  { nome: 'Reiquiavique', code: 'KEF', pais: 'Islândia' },
-  { nome: 'Havana', code: 'HAV', pais: 'Cuba' },
-];
-
-const LEMAS = ['a próxima parada', 'ida e volta', 'só de ida', 'o mundo é grande', 'longe daqui'];
 
 /** Tinta de carimbo é tinta de verdade, não a cor do papel escurecida. */
 const TINTAS = ['#2f4d72', '#3a6350', '#6b3350', '#7a4726', '#3c4a7c'];
@@ -151,155 +130,27 @@ function planePath(cx, cy, s) {
   return p;
 }
 
-/* --------------------------------------------------------------- texto ---- */
+/* --------------------------------------------------------------- marcas --- */
 
-function setFont(ctx, sizeMm, pxPerMm, family, weight = 400) {
-  ctx.font = `${weight} ${sizeMm * pxPerMm}px ${family}`;
+/**
+ * Onde ia uma linha impressa fica a marca dela, com a mesma altura e no mesmo
+ * lugar. O recorte não sabe o código do aeroporto, o nome do país nem a data da
+ * viagem de quem usa — então não escreve nenhum deles.
+ *
+ * `maxW` continua sendo o espaço reservado à linha e a marca ocupa uma fração
+ * dele, como texto de verdade ocuparia. Devolve a largura desenhada, porque há
+ * filete e coração que se posicionam pela ponta da linha.
+ */
+function markLine(ctx, cx, y, maxW, sizeMm, pxPerMm, { align = 'center', fill = 0.66, parts = 0 } = {}) {
+  if (sizeMm < MIN_TEXT_MM || !(maxW > 0)) return 0;
+  return inkWords(ctx, cx, y, maxW * fill, inkHeight(sizeMm, pxPerMm), align, parts);
 }
 
-function trackedWidth(ctx, text, spacing) {
-  let total = 0;
-  for (const ch of text) total += ctx.measureText(ch).width + spacing;
-  return total - spacing;
-}
-
-/** Espaçamento de letra na unha: `ctx.letterSpacing` ainda falta em navegador demais. */
-function drawTracked(ctx, text, cx, y, spacing) {
-  const total = trackedWidth(ctx, text, spacing);
-  const prev = ctx.textAlign;
-  ctx.textAlign = 'left';
-  let x = cx - total / 2;
-  for (const ch of text) {
-    ctx.fillText(ch, x, y);
-    x += ctx.measureText(ch).width + spacing;
-  }
-  ctx.textAlign = prev;
-  return total;
-}
-
-/** Encolhe até caber; devolve a largura desenhada, ou 0 se não coube legível. */
-function fitTracked(ctx, text, cx, y, maxW, sizeMm, pxPerMm, family, weight, em) {
-  let size = sizeMm;
-  while (size >= MIN_TEXT_MM) {
-    setFont(ctx, size, pxPerMm, family, weight);
-    const spacing = size * pxPerMm * em;
-    if (trackedWidth(ctx, text, spacing) <= maxW) return drawTracked(ctx, text, cx, y, spacing);
-    size *= 0.9;
-  }
-  return 0;
-}
-
-function fitPlain(ctx, text, cx, y, maxW, sizeMm, pxPerMm, family, weight) {
-  let size = sizeMm;
-  while (size >= MIN_TEXT_MM) {
-    setFont(ctx, size, pxPerMm, family, weight);
-    if (ctx.measureText(text).width <= maxW) {
-      const prev = ctx.textAlign;
-      ctx.textAlign = 'center';
-      ctx.fillText(text, cx, y);
-      ctx.textAlign = prev;
-      return ctx.measureText(text).width;
-    }
-    size *= 0.9;
-  }
-  return 0;
-}
-
-/** Rótulo miúdo por cima do valor: é o que faz um retângulo virar formulário. */
-function fieldLabel(ctx, label, value, x, y, maxW, sizeMm, pxPerMm, ink, faint) {
-  if (sizeMm < MIN_TEXT_MM) return;
-  const prev = ctx.textAlign;
-  ctx.textAlign = 'left';
-  ctx.fillStyle = faint;
-  setFont(ctx, sizeMm * 0.62, pxPerMm, SANS, 500);
-  const spacing = sizeMm * 0.62 * pxPerMm * 0.18;
-  if (trackedWidth(ctx, label, spacing) <= maxW) {
-    drawTracked(ctx, label, x + trackedWidth(ctx, label, spacing) / 2, y - sizeMm * pxPerMm * 0.62, spacing);
-  }
-  ctx.fillStyle = ink;
-  let size = sizeMm;
-  while (size >= MIN_TEXT_MM) {
-    setFont(ctx, size, pxPerMm, SANS, 700);
-    if (ctx.measureText(value).width <= maxW) {
-      ctx.fillText(value, x, y + size * pxPerMm * 0.18);
-      break;
-    }
-    size *= 0.9;
-  }
-  ctx.textAlign = prev;
-}
-
-/* ------------------------------------------------------------ contorno ---- */
-
-const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
-
-function cumulative(pts) {
-  const acc = [0];
-  for (let i = 1; i < pts.length; i++) acc.push(acc[i - 1] + dist(pts[i - 1], pts[i]));
-  return acc;
-}
-
-function sampleAt(pts, acc, s) {
-  const total = acc[acc.length - 1] || 1;
-  const d = ((s % total) + total) % total;
-  let i = 1;
-  while (i < acc.length - 1 && acc[i] < d) i++;
-  const seg = acc[i] - acc[i - 1] || 1;
-  const t = (d - acc[i - 1]) / seg;
-  const a = pts[(i - 1) % pts.length];
-  const b = pts[i % pts.length];
-  return {
-    x: a.x + (b.x - a.x) * t,
-    y: a.y + (b.y - a.y) * t,
-    angle: Math.atan2(b.y - a.y, b.x - a.x),
-  };
-}
-
-/** Letra a letra sobre a polilinha, cada uma girada pela tangente local. */
-function textOnPath(ctx, text, pts, spacing, centreLen) {
-  const acc = cumulative(pts);
-  let s = centreLen - trackedWidth(ctx, text, spacing) / 2;
-  const prev = ctx.textAlign;
-  ctx.textAlign = 'left';
-  for (const ch of text) {
-    const cw = ctx.measureText(ch).width;
-    const at = sampleAt(pts, acc, s + cw / 2);
-    ctx.save();
-    ctx.translate(at.x, at.y);
-    ctx.rotate(at.angle);
-    ctx.fillText(ch, -cw / 2, 0);
-    ctx.restore();
-    s += cw + spacing;
-  }
-  ctx.textAlign = prev;
-}
-
-function arcPoints(rx, ry, a0, a1, steps = 140) {
-  const pts = [];
-  for (let i = 0; i <= steps; i++) {
-    const a = a0 + (a1 - a0) * (i / steps);
-    pts.push({ x: Math.cos(a) * rx, y: Math.sin(a) * ry });
-  }
-  return pts;
-}
-
-/** Texto centrado num arco, medido pelo próprio arco. Devolve `false` se não coube. */
-function textOnArc(ctx, text, rx, ry, a0, a1, sizeMm, pxPerMm, family, weight, em) {
+/** A mesma marca, seguindo um arco: o anel do carimbo, a borda da etiqueta. */
+function markArc(ctx, rx, ry, a0, a1, sizeMm, pxPerMm, parts = 3, fill = 0.78) {
   if (sizeMm < MIN_TEXT_MM) return false;
-  const pts = arcPoints(rx, ry, a0, a1);
-  const acc = cumulative(pts);
-  const total = acc[acc.length - 1];
-  let size = sizeMm;
-  while (size >= MIN_TEXT_MM) {
-    setFont(ctx, size, pxPerMm, family, weight);
-    const spacing = size * pxPerMm * em;
-    if (trackedWidth(ctx, text, spacing) <= total * 0.92) {
-      textOnPath(ctx, text, pts, spacing, total / 2);
-      return true;
-    }
-    size *= 0.9;
-  }
-  return false;
+  inkArc(ctx, rx, ry, a0, a1, inkHeight(sizeMm, pxPerMm), parts, fill);
+  return true;
 }
 
 function ellipsePath(rx, ry) {
@@ -430,22 +281,19 @@ function inkRing(ctx, r, widthPx, tinta, rng, alpha = 0.85) {
   }
 }
 
-function postmark(ctx, cx, cy, r, pxPerMm, tinta, rng, texto, data) {
+function postmark(ctx, cx, cy, r, pxPerMm, tinta, rng) {
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(range(rng, -14, 14) * (Math.PI / 180));
-  ctx.textBaseline = 'middle';
 
   inkRing(ctx, r, r * 0.09, tinta, rng, 0.7);
   inkRing(ctx, r * 0.8, r * 0.05, tinta, rng, 0.55);
 
-  const bandMm = (r * 0.2) / pxPerMm;
   ctx.fillStyle = withAlpha(tinta, 0.72);
-  textOnArc(ctx, texto, r * 0.9, r * 0.9, Math.PI, TAU, bandMm, pxPerMm, SANS, 600, 0.24);
+  markArc(ctx, r * 0.9, r * 0.9, Math.PI, TAU, (r * 0.2) / pxPerMm, pxPerMm, 2);
 
-  ctx.textBaseline = 'middle';
   ctx.fillStyle = withAlpha(tinta, 0.78);
-  fitPlain(ctx, data, 0, 0, r * 1.2, (r * 0.3) / pxPerMm, pxPerMm, SANS, 600);
+  markLine(ctx, 0, 0, r * 1.2, (r * 0.3) / pxPerMm, pxPerMm, { parts: 2, fill: 0.72 });
 
   // Ondas de obliteração: elas é que dizem que o selo já foi usado.
   ctx.strokeStyle = withAlpha(tinta, 0.5);
@@ -469,26 +317,12 @@ function postmark(ctx, cx, cy, r, pxPerMm, tinta, rng, texto, data) {
   ctx.restore();
 }
 
-function seededVoo(rng) {
-  const par = [...DESTINOS];
-  const to = par.splice(Math.floor(rng() * par.length), 1)[0];
-  const from = par[Math.floor(rng() * par.length)];
-  return {
-    from,
-    to,
-    voo: `${pick(rng, ['LA', 'TP', 'AF', 'JJ', 'AZ'])} ${Math.floor(range(rng, 100, 9999))}`,
-    assento: `${Math.floor(range(rng, 1, 42))}${pick(rng, ['A', 'B', 'C', 'D', 'E', 'F'])}`,
-    portao: `${pick(rng, ['A', 'B', 'C', 'D'])}${Math.floor(range(rng, 1, 30))}`,
-    hora: `${String(Math.floor(range(rng, 5, 23))).padStart(2, '0')}:${Math.floor(rng() * 2) ? '40' : '10'}`,
-  };
-}
-
 /* -------------------------------------------------------------- estilos --- */
 
 const embarque = {
   id: 't-embarque',
   label: 'Cartão de embarque',
-  build({ w, h, pxPerMm, seed }) {
+  build({ w, h, pxPerMm }) {
     const mm = (v) => v * pxPerMm;
     const hw = mm(w) / 2;
     const hh = mm(h) / 2;
@@ -522,13 +356,11 @@ const embarque = {
       h: Math.max(mm(1), bodyH - head - foot),
     };
 
-    const voo = seededVoo(makeRng((seed ^ 0x11a3c7d5) >>> 0));
-
     return {
       paper,
       photo: roundedRect(box.x, box.y, box.w, box.h, 0),
       photoBox: box,
-      decorate: (ctx, info) => paintEmbarque(ctx, info, { body, stubBox, box, head, cut, alongX, voo, paper }),
+      decorate: (ctx, info) => paintEmbarque(ctx, info, { body, stubBox, box, head, cut, alongX, paper }),
     };
   },
 };
@@ -541,7 +373,6 @@ function paintEmbarque(ctx, { pxPerMm, tone, seed }, L) {
 
   ctx.save();
   ctx.clip(L.paper);
-  ctx.textBaseline = 'middle';
 
   // Picote: um tracejado impresso, não furos. É o que separa do ingresso de cinema.
   ctx.save();
@@ -561,46 +392,46 @@ function paintEmbarque(ctx, { pxPerMm, tone, seed }, L) {
 
   const bodyW = L.body.x1 - L.body.x0;
 
-  // Cabeçalho em negativo: barra de tinta cheia com o nome da companhia vazado.
+  // Cabeçalho em negativo: a barra de tinta cheia continua, e o que era o nome da
+  // companhia vazado nela vira marca vazada. O cartão segue tendo cabeçalho sem
+  // dizer de que companhia é o voo de ninguém.
   const headMm = L.head / pxPerMm;
   if (headMm >= MIN_TEXT_MM * 1.1) {
     ctx.fillStyle = ink;
     ctx.fillRect(L.body.x0, L.body.y0, bodyW, L.head * 0.86);
     ctx.fillStyle = tone;
     const midY = L.body.y0 + L.head * 0.43;
-    setFont(ctx, clamp(headMm * 0.4, MIN_TEXT_MM, 3), pxPerMm, SANS, 700);
-    const size = clamp(headMm * 0.4, MIN_TEXT_MM, 3);
-    const sp = size * pxPerMm * 0.28;
-    if (trackedWidth(ctx, 'LINHAS AÉREAS', sp) <= bodyW * 0.55) {
-      drawTracked(ctx, 'LINHAS AÉREAS', L.body.x0 + trackedWidth(ctx, 'LINHAS AÉREAS', sp) / 2 + mm(1), midY, sp);
-      const right = 'CARTÃO DE EMBARQUE';
-      setFont(ctx, clamp(headMm * 0.3, MIN_TEXT_MM, 2.2), pxPerMm, SANS, 500);
-      const sp2 = clamp(headMm * 0.3, MIN_TEXT_MM, 2.2) * pxPerMm * 0.2;
-      const rw = trackedWidth(ctx, right, sp2);
-      if (rw <= bodyW * 0.42) drawTracked(ctx, right, L.body.x1 - rw / 2 - mm(1), midY, sp2);
-    }
+    markLine(ctx, L.body.x0 + mm(1), midY, bodyW * 0.55, clamp(headMm * 0.4, MIN_TEXT_MM, 3), pxPerMm, {
+      align: 'left',
+      fill: 0.78,
+      parts: 2,
+    });
+    markLine(ctx, L.body.x1 - mm(1), midY, bodyW * 0.42, clamp(headMm * 0.3, MIN_TEXT_MM, 2.2), pxPerMm, {
+      align: 'right',
+      fill: 0.88,
+      parts: 3,
+    });
   }
 
   ctx.strokeStyle = shade(tone, 0.4, 0.4);
   ctx.lineWidth = penWidth(mm(0.16));
   ctx.strokeRect(L.box.x, L.box.y, L.box.w, L.box.h);
 
-  // Rodapé: origem, avião, destino e a linha de campos do formulário.
+  // Rodapé: as duas pontas do voo, o avião entre elas e a linha de campos.
   const footTop = L.box.y + L.box.h;
   const footH = L.body.y1 - footTop;
   const footMm = footH / pxPerMm;
   if (footMm >= MIN_TEXT_MM * 2) {
     const codeMm = clamp(footMm * 0.42, MIN_TEXT_MM, 11);
     const y = footTop + footH * 0.38;
-    ctx.fillStyle = ink;
-    setFont(ctx, codeMm, pxPerMm, SANS, 700);
-    const cw = ctx.measureText('WWW').width;
+    // O espaço de uma sigla de três letras, agora derivado do corpo: sem texto não
+    // há o que medir, mas a folga que ele exigia continua a mesma.
+    const cw = mm(codeMm * 1.9);
     if (cw * 2.6 <= bodyW) {
-      ctx.textAlign = 'left';
-      ctx.fillText(L.voo.from.code, L.box.x, y);
-      ctx.textAlign = 'right';
-      ctx.fillText(L.voo.to.code, L.box.x + L.box.w, y);
-      ctx.textAlign = 'left';
+      const codeH = inkHeight(codeMm, pxPerMm);
+      ctx.fillStyle = ink;
+      inkLine(ctx, L.box.x, y, cw, codeH, 'left');
+      inkLine(ctx, L.box.x + L.box.w, y, cw, codeH, 'right');
 
       const midX = L.box.x + L.box.w / 2;
       const arm = Math.min(bodyW * 0.16, mm(9));
@@ -620,14 +451,16 @@ function paintEmbarque(ctx, { pxPerMm, tone, seed }, L) {
     if (fieldMm >= MIN_TEXT_MM && footMm >= MIN_TEXT_MM * 4) {
       const fy = footTop + footH * 0.86;
       const slot = bodyW / 3;
-      const campos = [['VOO', L.voo.voo], ['PORTÃO', L.voo.portao], ['ASSENTO', L.voo.assento]];
-      campos.forEach(([label, value], i) => {
-        fieldLabel(ctx, label, value, L.box.x + slot * i, fy, slot * 0.94, fieldMm, pxPerMm, ink, faint);
-      });
+      // Três campos: é o par rótulo-e-valor repetido que faz o retângulo virar
+      // formulário, e ele funciona igual sem que os campos digam o que carregam.
+      for (let i = 0; i < 3; i++) {
+        inkField(ctx, L.box.x + slot * i, fy, slot * 0.94, inkHeight(fieldMm, pxPerMm), ink, faint);
+      }
     }
   }
 
-  // Talão: o texto corre no sentido comprido, então gira quando ele é vertical.
+  // Talão: o que é impresso nele corre no sentido comprido, então gira junto
+  // quando o talão desce para o pé do cartão.
   const acrossMm = (L.alongX ? L.stubBox.x1 - L.stubBox.x0 : L.stubBox.y1 - L.stubBox.y0) / pxPerMm;
   const alongMm = (L.alongX ? L.stubBox.y1 - L.stubBox.y0 : L.stubBox.x1 - L.stubBox.x0) / pxPerMm;
   if (acrossMm >= MIN_TEXT_MM * 1.8) {
@@ -637,18 +470,12 @@ function paintEmbarque(ctx, { pxPerMm, tone, seed }, L) {
 
     const codeMm = clamp(acrossMm * 0.4, MIN_TEXT_MM, 9);
     ctx.fillStyle = ink;
-    ctx.textAlign = 'center';
-    setFont(ctx, codeMm, pxPerMm, SANS, 700);
-    ctx.fillText(L.voo.to.code, 0, -mm(acrossMm * 0.24));
-    ctx.textAlign = 'left';
+    inkLine(ctx, 0, -mm(acrossMm * 0.24), mm(codeMm * 1.9), inkHeight(codeMm, pxPerMm), 'center');
 
     const smallMm = clamp(acrossMm * 0.17, 0, 2.6);
     if (smallMm >= MIN_TEXT_MM) {
       ctx.fillStyle = faint;
-      setFont(ctx, smallMm, pxPerMm, SANS, 500);
-      const txt = `${L.voo.hora} · ${L.voo.assento}`;
-      const sp = smallMm * pxPerMm * 0.16;
-      if (trackedWidth(ctx, txt, sp) <= mm(alongMm) * 0.9) drawTracked(ctx, txt, 0, mm(acrossMm * 0.04), sp);
+      markLine(ctx, 0, mm(acrossMm * 0.04), mm(alongMm) * 0.9, smallMm, pxPerMm, { parts: 2, fill: 0.62 });
     }
 
     const barH = mm(acrossMm * 0.26);
@@ -663,7 +490,7 @@ function paintEmbarque(ctx, { pxPerMm, tone, seed }, L) {
 const selo = {
   id: 't-selo',
   label: 'Selo postal',
-  build({ w, h, pxPerMm, seed }) {
+  build({ w, h, pxPerMm }) {
     const mm = (v) => v * pxPerMm;
     const hw = mm(w) / 2;
     const hh = mm(h) / 2;
@@ -681,15 +508,11 @@ const selo = {
       h: Math.max(mm(1), mm(h - margin - bottom)),
     };
 
-    const rng = makeRng((seed ^ 0x2ab5d031) >>> 0);
-    const destino = pick(rng, DESTINOS);
-    const valor = `${pick(rng, ['0,50', '1,00', '1,50', '2,20', '3,00'])}`;
-
     return {
       paper,
       photo: roundedRect(box.x, box.y, box.w, box.h, 0),
       photoBox: box,
-      decorate: (ctx, info) => paintSelo(ctx, info, { margin, bottom, box, destino, valor }),
+      decorate: (ctx, info) => paintSelo(ctx, info, { margin, bottom, box }),
     };
   },
 };
@@ -702,26 +525,26 @@ function paintSelo(ctx, { pxPerMm, tone, w, h }, L) {
   const faint = shade(tone, 0.5, 0.45);
 
   ctx.save();
-  ctx.textBaseline = 'middle';
 
   const off = mm(0.5);
   ctx.strokeStyle = faint;
   ctx.lineWidth = penWidth(mm(0.18));
   ctx.strokeRect(L.box.x - off, L.box.y - off, L.box.w + off * 2, L.box.h + off * 2);
 
+  // Valor à esquerda, emissor à direita: é esse par desequilibrado no alto que
+  // faz o retângulo picotado ler como selo, e não como foto com borda de renda.
   const topMm = L.margin;
   const valueMm = clamp(topMm * 0.62, 0, 5);
   if (valueMm >= MIN_TEXT_MM) {
     const y = -hh + mm(topMm * 0.52);
     ctx.fillStyle = ink;
-    ctx.textAlign = 'left';
-    setFont(ctx, valueMm, pxPerMm, SERIF, 600);
-    ctx.fillText(L.valor, L.box.x, y);
-    ctx.textAlign = 'right';
-    setFont(ctx, clamp(valueMm * 0.5, MIN_TEXT_MM, 2.4), pxPerMm, SANS, 500);
+    inkLine(ctx, L.box.x, y, mm(valueMm * 1.5), inkHeight(valueMm, pxPerMm), 'left');
     ctx.fillStyle = faint;
-    ctx.fillText('CORREIO', L.box.x + L.box.w, y);
-    ctx.textAlign = 'left';
+    markLine(ctx, L.box.x + L.box.w, y, L.box.w * 0.3, clamp(valueMm * 0.5, MIN_TEXT_MM, 2.4), pxPerMm, {
+      align: 'right',
+      fill: 0.9,
+      parts: 1,
+    });
   }
 
   const bandTop = L.box.y + L.box.h;
@@ -729,22 +552,11 @@ function paintSelo(ctx, { pxPerMm, tone, w, h }, L) {
   const bandMm = bandH / pxPerMm;
   if (bandMm >= MIN_TEXT_MM * 1.4) {
     ctx.fillStyle = ink;
-    fitTracked(
-      ctx,
-      L.destino.pais.toUpperCase(),
-      0,
-      bandTop + bandH * 0.42,
-      L.box.w,
-      clamp(bandMm * 0.4, 0, 4.4),
-      pxPerMm,
-      SANS,
-      600,
-      0.3
-    );
+    markLine(ctx, 0, bandTop + bandH * 0.42, L.box.w, clamp(bandMm * 0.4, 0, 4.4), pxPerMm, { fill: 0.58, parts: 1 });
     const sub = clamp(bandMm * 0.22, 0, 2.4);
     if (sub >= MIN_TEXT_MM && bandMm >= MIN_TEXT_MM * 2.6) {
       ctx.fillStyle = faint;
-      fitTracked(ctx, L.destino.nome.toUpperCase(), 0, bandTop + bandH * 0.78, L.box.w, sub, pxPerMm, SANS, 400, 0.24);
+      markLine(ctx, 0, bandTop + bandH * 0.78, L.box.w, sub, pxPerMm, { fill: 0.4, parts: 2 });
     }
   }
 
@@ -775,17 +587,13 @@ const carimbo = {
     const ring = clamp(minSide * 0.12, 2.4, 12);
     const r = Math.max(mm(1), Math.min(hw, hh) - mm(ring));
 
-    const rng = makeRng((seed ^ 0x3c9e2b47) >>> 0);
-    const destino = pick(rng, DESTINOS);
-    const tinta = pick(rng, TINTAS);
-    const dia = 1 + Math.floor(rng() * 28);
-    const mes = Math.floor(rng() * 12);
+    const tinta = pick(makeRng((seed ^ 0x3c9e2b47) >>> 0), TINTAS);
 
     return {
       paper: roundedRect(-hw, -hh, hw * 2, hh * 2, mm(0.5)),
       photo: circlePath(r),
       photoBox: { x: -r, y: -r, w: r * 2, h: r * 2 },
-      decorate: (ctx, info) => paintCarimbo(ctx, info, { ring, r, destino, tinta, dia, mes }),
+      decorate: (ctx, info) => paintCarimbo(ctx, info, { ring, r, tinta }),
     };
   },
 };
@@ -797,7 +605,6 @@ function paintCarimbo(ctx, { pxPerMm, tone, seed, w, h }, L) {
   const rng = makeRng((seed ^ 0x77c1a3e0) >>> 0);
 
   ctx.save();
-  ctx.textBaseline = 'middle';
 
   // Página do passaporte: guilhoché de mentira, só linhas paralelas bem fracas.
   ctx.save();
@@ -822,41 +629,34 @@ function paintCarimbo(ctx, { pxPerMm, tone, seed, w, h }, L) {
   inkRing(ctx, innerR, innerW, L.tinta, rng, 0.7);
 
   // A faixa é o vão limpo medido entre os dois anéis. Derivar daqui, e não de uma
-  // fração do miolo, é o que impede o nome do país de sair cortado pelo anel.
+  // fração do miolo, é o que impede a marca de sair cortada pelo anel.
   const gapLo = innerR + innerW / 2;
   const gapHi = outerR - outerW / 2;
   const textR = (gapLo + gapHi) / 2;
   const bandMm = clamp(((gapHi - gapLo) / pxPerMm) * 0.5, 0, 4);
   ctx.fillStyle = withAlpha(L.tinta, 0.88);
-  textOnArc(ctx, L.destino.pais.toUpperCase(), textR, textR, Math.PI, TAU, bandMm, pxPerMm, SANS, 700, 0.26);
+  markArc(ctx, textR, textR, Math.PI, TAU, bandMm, pxPerMm, 2, 0.7);
 
   // A tarjeta atravessada é o que todo carimbo de fronteira tem, e ela ocupa o pé
-  // do anel — por isso "ENTRADA" viaja dentro dela em vez de no arco de baixo, que
-  // ficaria escondido atrás. Sem tarjeta, o arco volta a ser o lugar da palavra.
+  // do anel. Sem tarjeta, o arco de baixo volta a ser o lugar da marca.
   const dateMm = clamp(L.ring * 0.34, 0, 3.6);
-  const data = `${String(L.dia).padStart(2, '0')} ${MESES_ABR[L.mes]}`;
   let tarjeta = false;
   if (dateMm >= MIN_TEXT_MM) {
-    setFont(ctx, dateMm, pxPerMm, SANS, 700);
-    const sp = dateMm * pxPerMm * 0.18;
     const padX = mm(dateMm * 0.5);
     const boxH = mm(dateMm * 1.7);
     const y = outerR - boxH * 0.1;
-    const label = trackedWidth(ctx, `ENTRADA ${data}`, sp) + padX * 2 < hw * 1.9
-      ? `ENTRADA ${data}`
-      : data;
-    const tw = trackedWidth(ctx, label, sp);
+    const tw = Math.min(mm(dateMm * 6.5), hw * 1.4);
     if (tw + padX * 2 < hw * 1.9) {
       ctx.fillStyle = withAlpha(L.tinta, 0.9);
       ctx.fillRect(-tw / 2 - padX, y - boxH / 2, tw + padX * 2, boxH);
       ctx.fillStyle = tone;
-      drawTracked(ctx, label, 0, y, sp);
+      inkWords(ctx, 0, y, tw, inkHeight(dateMm, pxPerMm), 'center', 2);
       tarjeta = true;
     }
   }
   if (!tarjeta) {
     ctx.fillStyle = withAlpha(L.tinta, 0.88);
-    textOnArc(ctx, 'ENTRADA', textR, textR, Math.PI * 0.72, Math.PI * 0.28, bandMm * 0.9, pxPerMm, SANS, 600, 0.3);
+    markArc(ctx, textR, textR, Math.PI * 0.72, Math.PI * 0.28, bandMm * 0.9, pxPerMm, 1, 0.42);
   }
 
   const starR = mm(clamp(L.ring * 0.16, 0.3, 1.4));
@@ -885,15 +685,13 @@ const postal = {
       h: Math.max(mm(1), mm(h - margin - band)),
     };
 
-    const rng = makeRng((seed ^ 0x59f0c223) >>> 0);
-    const destino = pick(rng, DESTINOS);
-    const tinta = pick(rng, TINTAS);
+    const tinta = pick(makeRng((seed ^ 0x59f0c223) >>> 0), TINTAS);
 
     return {
       paper: roundedRect(-hw, -hh, hw * 2, hh * 2, mm(0.9)),
       photo: roundedRect(box.x, box.y, box.w, box.h, mm(0.3)),
       photoBox: box,
-      decorate: (ctx, info) => paintPostal(ctx, info, { margin, box, destino, tinta }),
+      decorate: (ctx, info) => paintPostal(ctx, info, { margin, box, tinta }),
     };
   },
 };
@@ -906,24 +704,13 @@ function paintPostal(ctx, { pxPerMm, tone, seed, w, h }, L) {
   const faint = shade(tone, 0.5, 0.45);
 
   ctx.save();
-  ctx.textBaseline = 'middle';
 
   // Obliteração por cima da foto: no postal que viajou, o carimbo pega a imagem.
   const markR = mm(clamp(Math.min(w, h) * 0.11, 2.2, 9));
   if (markR > mm(2)) {
     ctx.save();
     ctx.clip(roundedRect(L.box.x, L.box.y, L.box.w, L.box.h, mm(0.3)));
-    postmark(
-      ctx,
-      L.box.x + L.box.w - markR * 1.15,
-      L.box.y + markR * 1.15,
-      markR,
-      pxPerMm,
-      L.tinta,
-      rng,
-      L.destino.nome.toUpperCase(),
-      `${String(1 + Math.floor(rng() * 28)).padStart(2, '0')}.${String(1 + Math.floor(rng() * 12)).padStart(2, '0')}`
-    );
+    postmark(ctx, L.box.x + L.box.w - markR * 1.15, L.box.y + markR * 1.15, markR, pxPerMm, L.tinta, rng);
     ctx.restore();
   }
 
@@ -936,22 +723,15 @@ function paintPostal(ctx, { pxPerMm, tone, seed, w, h }, L) {
   }
 
   ctx.fillStyle = ink;
-  const nameW = fitPlain(
-    ctx,
-    L.destino.nome,
-    0,
-    bandTop + bandH * 0.44,
-    L.box.w * 0.92,
-    clamp(bandMm * 0.52, 0, 12),
-    pxPerMm,
-    SERIF,
-    600
-  );
+  const nameW = markLine(ctx, 0, bandTop + bandH * 0.44, L.box.w * 0.92, clamp(bandMm * 0.52, 0, 12), pxPerMm, {
+    fill: 0.5,
+    parts: 1,
+  });
 
   const subMm = clamp(bandMm * 0.2, 0, 2.6);
   if (nameW > 0 && subMm >= MIN_TEXT_MM && bandMm >= MIN_TEXT_MM * 3) {
     ctx.fillStyle = faint;
-    fitTracked(ctx, `LEMBRANÇAS DE ${L.destino.pais.toUpperCase()}`, 0, bandTop + bandH * 0.82, L.box.w * 0.9, subMm, pxPerMm, SANS, 500, 0.3);
+    markLine(ctx, 0, bandTop + bandH * 0.82, L.box.w * 0.9, subMm, pxPerMm, { fill: 0.52, parts: 3 });
   }
 
   if (nameW > 0) {
@@ -967,19 +747,17 @@ function paintPostal(ctx, { pxPerMm, tone, seed, w, h }, L) {
 const mapa = {
   id: 't-mapa',
   label: 'Mapa dobrado',
-  build({ w, h, pxPerMm, seed }) {
+  build({ w, h, pxPerMm }) {
     const mm = (v) => v * pxPerMm;
     const hw = mm(w) / 2;
     const hh = mm(h) / 2;
     const paper = roundedRect(-hw, -hh, hw * 2, hh * 2, mm(0.5));
-    const rng = makeRng((seed ^ 0x0f7a51c8) >>> 0);
-    const destino = pick(rng, DESTINOS);
 
     return {
       paper,
       photo: paper,
       photoBox: { x: -hw, y: -hh, w: hw * 2, h: hh * 2 },
-      decorate: (ctx, info) => paintMapa(ctx, info, { paper, destino }),
+      decorate: (ctx, info) => paintMapa(ctx, info, { paper }),
     };
   },
 };
@@ -1046,24 +824,22 @@ function paintMapa(ctx, { pxPerMm, seed, w, h }, L) {
   ctx.fill();
   dot(ctx, b.x, b.y - pinR * 0.4, pinR);
 
-  // Coordenadas na margem: sem elas é uma foto com riscos, com elas é mapa.
+  // Coordenadas na margem: sem elas é uma foto com riscos, com elas é mapa. As
+  // letras e os números viram as marcas deles, uma por casa da grade.
   const gridMm = clamp(minSide * 0.035, 0, 2.6);
   if (gridMm >= MIN_TEXT_MM) {
     ctx.fillStyle = 'rgba(255,253,248,0.8)';
-    setFont(ctx, gridMm, pxPerMm, SANS, 600);
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'center';
+    const cell = inkHeight(gridMm, pxPerMm);
     const cols = 4;
     for (let i = 0; i < cols; i++) {
       const x = -hw + ((i + 0.5) * hw * 2) / cols;
-      ctx.fillText(String.fromCharCode(65 + i), x, -hh + mm(gridMm * 1.1));
+      inkLine(ctx, x, -hh + mm(gridMm * 1.1), cell * 0.9, cell, 'center');
     }
     const rows = 3;
     for (let i = 0; i < rows; i++) {
       const y = -hh + ((i + 0.5) * hh * 2) / rows;
-      ctx.fillText(String(i + 1), -hw + mm(gridMm * 0.9), y);
+      inkLine(ctx, -hw + mm(gridMm * 0.9), y, cell * 0.55, cell, 'center');
     }
-    ctx.textAlign = 'left';
   }
 
   // Escala e rosa: canto inferior, o par que assina qualquer carta topográfica.
@@ -1094,22 +870,17 @@ function paintMapa(ctx, { pxPerMm, seed, w, h }, L) {
     ctx.lineTo(nx - mm(nMm * 0.4), ny + mm(nMm * 0.2));
     ctx.closePath();
     ctx.fill();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    setFont(ctx, nMm * 0.6, pxPerMm, SANS, 700);
-    ctx.fillText('N', nx, ny + mm(nMm * 0.7));
-    ctx.textAlign = 'left';
+    // A seta já aponta o norte sozinha; a letra ao pé dela era repetição.
   }
 
   const titleMm = clamp(minSide * 0.075, 0, 6.5);
   if (titleMm >= MIN_TEXT_MM) {
-    ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = white;
-    setFont(ctx, titleMm, pxPerMm, SERIF, 600);
-    const label = L.destino.nome;
-    if (ctx.measureText(label).width <= hw * 1.4) {
-      ctx.fillText(label, -hw + mm(clamp(minSide * 0.06, 1.4, 5)), -hh + mm(clamp(minSide * 0.13, 3, 11)));
-    }
+    markLine(ctx, -hw + mm(clamp(minSide * 0.06, 1.4, 5)), -hh + mm(clamp(minSide * 0.13, 3, 11)), hw * 1.4, titleMm, pxPerMm, {
+      align: 'left',
+      fill: 0.44,
+      parts: 1,
+    });
   }
 
   ctx.restore();
@@ -1119,7 +890,7 @@ function paintMapa(ctx, { pxPerMm, seed, w, h }, L) {
 const bagagem = {
   id: 't-bagagem',
   label: 'Etiqueta de bagagem',
-  build({ w, h, pxPerMm, seed }) {
+  build({ w, h, pxPerMm }) {
     const mm = (v) => v * pxPerMm;
     const hw = mm(w) / 2;
     const hh = mm(h) / 2;
@@ -1142,16 +913,12 @@ const bagagem = {
       h: Math.max(mm(1), hh - (-hh + head) - foot),
     };
 
-    const rng = makeRng((seed ^ 0x7d40e615) >>> 0);
-    const destino = pick(rng, DESTINOS);
-    const peso = `${(range(rng, 8, 23)).toFixed(1)} kg`;
-
     return {
       paper,
       photo: roundedRect(box.x, box.y, box.w, box.h, mm(0.3)),
       photoBox: box,
       rule: 'evenodd',
-      decorate: (ctx, info) => paintBagagem(ctx, info, { holeY, holeR, head, box, destino, peso, paper }),
+      decorate: (ctx, info) => paintBagagem(ctx, info, { holeY, holeR, head, box, paper }),
     };
   },
 };
@@ -1166,7 +933,6 @@ function paintBagagem(ctx, { pxPerMm, tone, seed, w, h }, L) {
   const faint = shade(tone, 0.5, 0.5);
 
   ctx.save();
-  ctx.textBaseline = 'middle';
 
   // Ilhós: o anel metálico é o que impede o furo de rasgar — e de parecer decalque.
   ctx.strokeStyle = shade(tone, 0.45, 0.6);
@@ -1186,22 +952,17 @@ function paintBagagem(ctx, { pxPerMm, tone, seed, w, h }, L) {
   const footMm = footH / pxPerMm;
   if (footMm >= MIN_TEXT_MM * 1.6) {
     const codeMm = clamp(footMm * 0.46, MIN_TEXT_MM, 14);
-    ctx.fillStyle = ink;
-    ctx.textAlign = 'left';
-    setFont(ctx, codeMm, pxPerMm, SANS, 700);
-    const codeW = ctx.measureText(L.destino.code).width;
+    const codeW = mm(codeMm * 1.9);
     const y = footTop + footH * 0.42;
     if (codeW <= L.box.w * 0.6) {
-      ctx.fillText(L.destino.code, L.box.x, y);
+      ctx.fillStyle = ink;
+      inkLine(ctx, L.box.x, y, codeW, inkHeight(codeMm, pxPerMm), 'left');
 
       const sideMm = clamp(footMm * 0.19, 0, 2.6);
       if (sideMm >= MIN_TEXT_MM) {
         ctx.fillStyle = faint;
-        setFont(ctx, sideMm, pxPerMm, SANS, 500);
-        ctx.textAlign = 'right';
-        ctx.fillText(L.peso, L.box.x + L.box.w, y - mm(sideMm * 0.7));
-        ctx.fillText(L.destino.nome.toUpperCase(), L.box.x + L.box.w, y + mm(sideMm * 0.7));
-        ctx.textAlign = 'left';
+        markLine(ctx, L.box.x + L.box.w, y - mm(sideMm * 0.7), L.box.w * 0.3, sideMm, pxPerMm, { align: 'right', parts: 1 });
+        markLine(ctx, L.box.x + L.box.w, y + mm(sideMm * 0.7), L.box.w * 0.34, sideMm, pxPerMm, { align: 'right', parts: 2 });
       }
     }
 
@@ -1213,7 +974,7 @@ function paintBagagem(ctx, { pxPerMm, tone, seed, w, h }, L) {
   const topMm = (L.head * 0.4) / pxPerMm;
   if (topMm >= MIN_TEXT_MM) {
     ctx.fillStyle = faint;
-    fitTracked(ctx, 'BAGAGEM DESPACHADA', 0, -hh + L.head * 0.82, hw * 1.5, clamp(topMm * 0.5, 0, 2.4), pxPerMm, SANS, 500, 0.3);
+    markLine(ctx, 0, -hh + L.head * 0.82, hw * 1.5, clamp(topMm * 0.5, 0, 2.4), pxPerMm, { fill: 0.5, parts: 2 });
   }
 
   ctx.restore();
@@ -1222,21 +983,18 @@ function paintBagagem(ctx, { pxPerMm, tone, seed, w, h }, L) {
 const bussola = {
   id: 't-bussola',
   label: 'Rosa dos ventos',
-  build({ w, h, pxPerMm, seed }) {
+  build({ w, h, pxPerMm }) {
     const mm = (v) => v * pxPerMm;
     const minSide = Math.min(w, h);
     const outer = (Math.min(mm(w), mm(h))) / 2;
     const ring = clamp(minSide * 0.11, 2.2, 11);
     const r = Math.max(mm(1), outer - mm(ring));
 
-    const rng = makeRng((seed ^ 0x2e51c0b9) >>> 0);
-    const destino = pick(rng, DESTINOS);
-
     return {
       paper: circlePath(outer),
       photo: circlePath(r),
       photoBox: { x: -r, y: -r, w: r * 2, h: r * 2 },
-      decorate: (ctx, info) => paintBussola(ctx, info, { outer, ring, r, destino }),
+      decorate: (ctx, info) => paintBussola(ctx, info, { outer, ring, r }),
     };
   },
 };
@@ -1266,18 +1024,25 @@ function paintBussola(ctx, { pxPerMm, tone }, L) {
     hairline(ctx, x0, y0, Math.cos(a) * tickR, Math.sin(a) * tickR, mm(long ? 0.24 : 0.12), long ? ink : faint);
   }
 
+  // As quatro cardeais viram losangos: sem letra, o que marca os quatro pontos é a
+  // forma que só existe neles — os traços de grau são todos retos.
   const letterMm = clamp(L.ring * 0.38, 0, 5);
   if (letterMm >= MIN_TEXT_MM) {
     ctx.fillStyle = ink;
-    setFont(ctx, letterMm, pxPerMm, SERIF, 700);
-    ctx.textAlign = 'center';
     const at = L.r + mm(L.ring * 0.42);
-    const cardeais = [['N', -90], ['L', 0], ['S', 90], ['O', 180]];
-    for (const [ch, deg] of cardeais) {
+    const d = mm(letterMm * 0.34);
+    for (const deg of [-90, 0, 90, 180]) {
       const a = deg * (Math.PI / 180);
-      ctx.fillText(ch, Math.cos(a) * at, Math.sin(a) * at);
+      const cx = Math.cos(a) * at;
+      const cy = Math.sin(a) * at;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - d);
+      ctx.lineTo(cx + d, cy);
+      ctx.lineTo(cx, cy + d);
+      ctx.lineTo(cx - d, cy);
+      ctx.closePath();
+      ctx.fill();
     }
-    ctx.textAlign = 'left';
   }
 
   // Bico do norte. Mora na pista dos traços, aproveitando a falha dos 90°, senão
@@ -1296,7 +1061,7 @@ function paintBussola(ctx, { pxPerMm, tone }, L) {
   if (nameMm >= MIN_TEXT_MM) {
     ctx.fillStyle = shade(tone, 0.7, 0.8);
     const textR = L.r + mm(L.ring * 0.16);
-    textOnArc(ctx, L.destino.nome.toUpperCase(), textR, textR, Math.PI * 0.78, Math.PI * 0.22, nameMm, pxPerMm, SANS, 600, 0.32);
+    markArc(ctx, textR, textR, Math.PI * 0.78, Math.PI * 0.22, nameMm, pxPerMm, 2, 0.44);
   }
 
   ctx.restore();
@@ -1305,7 +1070,7 @@ function paintBussola(ctx, { pxPerMm, tone }, L) {
 const hotel = {
   id: 't-hotel',
   label: 'Etiqueta de hotel',
-  build({ w, h, pxPerMm, seed }) {
+  build({ w, h, pxPerMm }) {
     const mm = (v) => v * pxPerMm;
     const hw = mm(w) / 2;
     const hh = mm(h) / 2;
@@ -1315,15 +1080,11 @@ const hotel = {
     const rx = Math.max(mm(1), hw - mm(ring));
     const ry = Math.max(mm(1), hh - mm(ring * 1.35));
 
-    const rng = makeRng((seed ^ 0x38b7f204) >>> 0);
-    const destino = pick(rng, DESTINOS);
-    const lema = pick(rng, LEMAS);
-
     return {
       paper: roundedRect(-hw, -hh, hw * 2, hh * 2, mm(clamp(minSide * 0.05, 0.8, 3.5))),
       photo: ellipsePath(rx, ry),
       photoBox: { x: -rx, y: -ry, w: rx * 2, h: ry * 2 },
-      decorate: (ctx, info) => paintHotel(ctx, info, { ring, rx, ry, destino, lema }),
+      decorate: (ctx, info) => paintHotel(ctx, info, { ring, rx, ry }),
     };
   },
 };
@@ -1338,7 +1099,6 @@ function paintHotel(ctx, { pxPerMm, tone, seed, w, h }, L) {
   const tinta = pick(rng, TINTAS);
 
   ctx.save();
-  ctx.textBaseline = 'middle';
 
   const off = mm(clamp(L.ring * 0.22, 0.5, 2.6));
   outline(ctx, roundedRect(-hw + off, -hh + off, (hw - off) * 2, (hh - off) * 2, mm(0.6)), mm(0.3), ink);
@@ -1356,16 +1116,16 @@ function paintHotel(ctx, { pxPerMm, tone, seed, w, h }, L) {
   ctx.fillStyle = withAlpha(tinta, 0.9);
   const arcRx = L.rx + mm(L.ring * 0.62);
   const arcRy = L.ry + mm(L.ring * 0.62);
-  textOnArc(ctx, `HOTEL ${L.destino.nome.toUpperCase()}`, arcRx, arcRy, Math.PI * 1.18, Math.PI * 1.82, bandMm, pxPerMm, SANS, 700, 0.24);
+  markArc(ctx, arcRx, arcRy, Math.PI * 1.18, Math.PI * 1.82, bandMm, pxPerMm, 2, 0.62);
 
   const footMm = clamp(L.ring * 0.32, 0, 3.4);
   if (footMm >= MIN_TEXT_MM) {
     const y = hh - mm(L.ring * 0.5);
     ctx.fillStyle = ink;
-    const paisW = fitTracked(ctx, L.destino.pais.toUpperCase(), 0, y, hw * 1.6, footMm, pxPerMm, SANS, 500, 0.34);
+    const paisW = markLine(ctx, 0, y, hw * 1.6, footMm, pxPerMm, { fill: 0.34, parts: 1 });
     const arm = Math.min(hw * 0.34, mm(11));
     const inner = paisW / 2 + mm(footMm * 0.9);
-    // O filete só entra se sobrar folga depois do nome medido; senão ele o risca.
+    // O filete só entra se sobrar folga depois da marca; senão ele a risca.
     if (paisW > 0 && arm > inner + mm(0.8)) {
       hairline(ctx, -arm, y, -inner, y, mm(0.16), faint);
       hairline(ctx, inner, y, arm, y, mm(0.16), faint);
@@ -1375,7 +1135,7 @@ function paintHotel(ctx, { pxPerMm, tone, seed, w, h }, L) {
   const lemaMm = clamp(L.ring * 0.26, 0, 2.8);
   if (lemaMm >= MIN_TEXT_MM && L.ring > 4) {
     ctx.fillStyle = faint;
-    fitPlain(ctx, L.lema, 0, -hh + mm(L.ring * 0.42), hw * 1.3, lemaMm, pxPerMm, SERIF, 500);
+    markLine(ctx, 0, -hh + mm(L.ring * 0.42), hw * 1.3, lemaMm, pxPerMm, { fill: 0.5, parts: 3 });
   }
 
   ctx.restore();

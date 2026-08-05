@@ -8,11 +8,24 @@ import {
 } from '../core/units.js';
 import { computeLayout, arrangeItemsForCells } from '../layout/index.js';
 import { cellTilt } from '../render/renderer.js';
-import { CATEGORIES, categoryOf } from '../render/decor/index.js';
+import { CATEGORIES } from '../render/decor/index.js';
+import { CUT_STYLES, CUT_LABELS } from '../render/shapes.js';
 
 const $ = (id) => document.getElementById(id);
 const labelOf = (label) => (typeof label === 'string' ? label : label.pt);
 const MIN_PRINT_DPI = 150;
+
+/**
+ * Uma foto tem um formato só. Recorte simples e estilo de categoria respondem à
+ * mesma pergunta — "que forma esta foto tem" — e para o renderer são o mesmo
+ * campo. Ficam na mesma lista; o que muda entre eles é a família, não o tipo.
+ */
+const FAMILIES = [
+  { id: 'basico', label: 'Básicos', styles: CUT_STYLES.map((id) => ({ id, label: CUT_LABELS[id] })) },
+  ...CATEGORIES,
+];
+
+const familyOf = (cut) => FAMILIES.find((f) => f.styles.some((s) => s.id === cut)) || FAMILIES[0];
 
 /**
  * Binds the sidebar to the store. The store is the single source of truth: every
@@ -30,49 +43,6 @@ export function bindControls({ store, assetStore, getLayout, onSurfaceImage }) {
   fillPresets();
 
   /* --------------------------------------------------------- 0. esta foto */
-
-  itemSeg('photo-cut', {
-    read: (item) => item.cutOverride || 'auto',
-    write: (item, v) => {
-      item.cutOverride = v === 'auto' ? null : v;
-    },
-  });
-
-  // The category buttons only filter the list below them; the styles are what
-  // actually write to the photo. Keeping the filter out of the store means
-  // browsing categories never lands in the undo history.
-  let decorCategory = CATEGORIES[0].id;
-
-  fillSeg($('photo-category'), CATEGORIES.map((c) => ({ value: c.id, label: c.label })));
-  fillDecorList();
-
-  $('photo-category').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-value]');
-    if (!btn) return;
-    decorCategory = btn.dataset.value;
-    fillDecorList();
-    sync(store.get());
-  });
-
-  // Pushed before the decor binder so the buttons exist by the time it paints.
-  binders.push((s) => {
-    const owner = categoryOf(selectedItem(s)?.cutOverride);
-    if (owner && owner !== decorCategory) {
-      decorCategory = owner;
-      fillDecorList();
-    }
-    paintSeg($('photo-category'), decorCategory);
-  });
-
-  itemSeg('photo-decor', {
-    read: (item) => (categoryOf(item.cutOverride) ? item.cutOverride : 'auto'),
-    write: (item, v) => {
-      // "Nenhuma" drops the customization without disturbing a plain cut the
-      // user may have chosen in the panel above.
-      if (v !== 'auto') item.cutOverride = v;
-      else if (categoryOf(item.cutOverride)) item.cutOverride = null;
-    },
-  });
 
   itemSeg('photo-tint', {
     read: (item) => item.tint || 'none',
@@ -148,7 +118,7 @@ export function bindControls({ store, assetStore, getLayout, onSurfaceImage }) {
     }, { reason: 'photo-reset' });
   });
 
-  /* ------------------------------------------------------------ 1. tamanho */
+  /* ------------------------------------------------------------ 2. tamanho */
 
   const preset = $('board-preset');
   preset.addEventListener('change', () => {
@@ -179,7 +149,7 @@ export function bindControls({ store, assetStore, getLayout, onSurfaceImage }) {
     coalesce: 'custom-h',
   });
 
-  /* ------------------------------------------------------------ 2. arranjo */
+  /* ------------------------------------------------------------ 3. arranjo */
 
   bindSeg('engine', {
     read: (s) => s.layout.engine,
@@ -217,13 +187,62 @@ export function bindControls({ store, assetStore, getLayout, onSurfaceImage }) {
     },
   });
 
-  /* ------------------------------------------------------------- 3. estilo */
+  /* ------------------------------------------------------------- 1. estilo */
 
-  bindSeg('cut', {
-    read: (s) => s.style.cut,
-    write: (d, v) => {
-      d.style.cut = v;
-    },
+  // Um controle só para o formato. O alvo é a foto selecionada; sem seleção, o
+  // padrão do quadro. Dois controles separados só diferiam em escopo, e escopo é
+  // invisível: o override da foto ganhava do padrão do quadro sem avisar ninguém.
+  let cutFamily = FAMILIES[0].id;
+  let cutKey = null;
+
+  fillSeg($('cut-family'), FAMILIES.map((f) => ({ value: f.id, label: f.label })));
+  fillCutList();
+
+  $('cut-family').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-value]');
+    if (!btn) return;
+    cutFamily = btn.dataset.value;
+    fillCutList();
+    sync(store.get());
+  });
+
+  $('cut').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-value]');
+    if (!btn) return;
+    const value = btn.dataset.value;
+    const s = store.get();
+    const target = selectedItem(s);
+    if ((target ? target.cutOverride : s.style.cut) === value) return;
+    store.update((d) => {
+      const item = d.items.find((i) => i.id === s.selectedId);
+      if (item) item.cutOverride = value;
+      else d.style.cut = value;
+    }, { reason: 'cut' });
+  });
+
+  $('cut-inherit').addEventListener('click', () => {
+    patchSelected((item) => {
+      item.cutOverride = null;
+    }, { reason: 'cut' });
+  });
+
+  binders.push((s) => {
+    const item = selectedItem(s);
+    const cut = item?.cutOverride || s.style.cut;
+    // A família só se move quando o formato muda de fato. Reagir a toda pintura
+    // desfaria o clique de quem está apenas olhando outra categoria.
+    const key = `${s.selectedId}:${cut}`;
+    if (key !== cutKey) {
+      cutKey = key;
+      if (familyOf(cut).id !== cutFamily) {
+        cutFamily = familyOf(cut).id;
+        fillCutList();
+      }
+    }
+    paintSeg($('cut-family'), cutFamily);
+    paintSeg($('cut'), cut);
+    $('cut-scope').textContent = item ? 'Formato desta foto' : 'Formato de todas as fotos';
+    $('cut-inherit').hidden = !item?.cutOverride;
   });
 
   bindSlider('tear', {
@@ -466,12 +485,13 @@ export function bindControls({ store, assetStore, getLayout, onSurfaceImage }) {
     });
   }
 
-  function fillDecorList() {
-    const category = CATEGORIES.find((c) => c.id === decorCategory) || CATEGORIES[0];
-    fillSeg($('photo-decor'), [
-      { value: 'auto', label: 'Nenhuma' },
-      ...category.styles.map((s) => ({ value: s.id, label: s.label })),
-    ]);
+  function fillCutList() {
+    const family = FAMILIES.find((f) => f.id === cutFamily) || FAMILIES[0];
+    const group = $('cut');
+    // Nome de categoria é frase inteira ("Cartão de embarque") e a grade de duas
+    // colunas o cortaria; recorte simples é uma palavra e cabe em duas colunas.
+    group.classList.toggle('seg--decor', family.id !== 'basico');
+    fillSeg(group, family.styles.map((s) => ({ value: s.id, label: s.label })));
   }
 
   function itemSlider(id, { read, write, format, step = 1 }) {

@@ -43,12 +43,6 @@
 
   0. ESTA FOTO  (oculto: [hidden] enquanto nada estiver selecionado)
     #photo-group         <details> seção inteira
-    #photo-cut           <div>     grupo segmentado; data-value="auto" ou um dos
-                                   13 recortes — grava item.cutOverride
-    #photo-category      <div>     grupo segmentado, preenchido em runtime a
-                                   partir de CATEGORIES — só filtra a lista abaixo
-    #photo-decor         <div>     grupo segmentado, preenchido em runtime com os
-                                   estilos da categoria; grava item.cutOverride
     #photo-tint          <div>     grupo segmentado; data-value="none" ou tinta
     #photo-frame  + #photo-frame-value      moldura em mm
     #photo-frame-color   <input color>      cor da moldura
@@ -59,8 +53,24 @@
     #btn-photo-back      <button>  manda a peça para trás
     #btn-photo-reset     <button>  devolve a peça ao padrão do quadro
 
-  1. TAMANHO
-    #board-preset        <select>  VAZIO no HTML; preenchido em runtime com
+  1. ESTILO
+    #cut-scope           <span>    diz quem o formato abaixo está editando
+    #cut-family          <div>     grupo segmentado, preenchido em runtime:
+                                   "Básicos" + as categorias de decoração
+    #cut                 <div>     grupo segmentado, preenchido em runtime com os
+                                   formatos da família. Grava item.cutOverride se
+                                   houver foto selecionada, senão style.cut
+    #cut-inherit         <button>  devolve a foto ao formato do quadro (oculto:
+                                   [hidden] sem seleção ou sem override)
+    #tear   + #tear-value
+    #fringe + #fringe-value
+    #shadow + #shadow-value
+    #tilt   + #tilt-value
+    #tape   + #tape-value
+    #radius + #radius-value
+
+  2. TAMANHO
+    #board-preset       <select>  VAZIO no HTML; preenchido em runtime com
                                    <optgroup> + <option value="...">
     #orientation         <div>     grupo segmentado
                                      button[data-value="portrait"]
@@ -70,24 +80,13 @@
     #custom-h            <input number> altura personalizada
     #size-readout        <p>       leitura, ex.: "30 × 40 cm · 3543 × 4724 px"
 
-  2. ARRANJO
+  3. ARRANJO
     #engine              <div>     grupo segmentado
                                      data-value="mosaic" | "bento" | "scatter"
     #btn-shuffle         <button>  "Novo arranjo"
     #margin  + #margin-value
     #gutter  + #gutter-value
     #variety + #variety-value
-
-  3. ESTILO
-    #cut                 <div>     grupo segmentado
-                                     data-value="torn" | "sharp" | "rounded"
-                                                | "polaroid" | "arch" | "circle"
-    #tear   + #tear-value
-    #fringe + #fringe-value
-    #shadow + #shadow-value
-    #tilt   + #tilt-value
-    #tape   + #tape-value
-    #radius + #radius-value
 
   4. FUNDO
     #surface-kind        <div>     grupo segmentado
@@ -187,43 +186,49 @@
   <aside id="sidebar" class="sidebar" aria-label="Controles do quadro">
     <div class="sidebar__scroll">
 
-      <!-- 0. ESTA FOTO (só aparece com uma foto selecionada) -->
+      <!-- 0. ARRANJO -->
+      <details class="group" open>
+        <summary class="group__head">
+          <span class="group__legend">Arranjo</span>
+          <svg class="group__chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="group__body">
+          <div class="field">
+            <span class="field__label">Motor</span>
+            <div id="engine" class="seg" role="group" aria-label="Motor de arranjo">
+              <button class="seg__btn is-active" type="button" data-value="mosaic" aria-pressed="true">Mosaico</button>
+              <button class="seg__btn" type="button" data-value="bento" aria-pressed="false">Bento</button>
+              <button class="seg__btn" type="button" data-value="scatter" aria-pressed="false">Espalhado</button>
+            </div>
+          </div>
+
+          <button id="btn-shuffle" class="btn btn--ghost btn--block" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="btn__icon"><path d="M17 4h4v4"/><path d="M3 20 21 4"/><path d="M17 20h4v-4"/><path d="m3 4 6 6"/><path d="m15 16 6 4"/></svg>
+            Novo arranjo
+          </button>
+
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="margin">Margem</label><span id="margin-value" class="slider__value">18</span></div>
+            <input id="margin" type="range" min="0" max="60" step="1" value="18">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="gutter">Respiro</label><span id="gutter-value" class="slider__value">12</span></div>
+            <input id="gutter" type="range" min="0" max="48" step="1" value="12">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="variety">Variedade</label><span id="variety-value" class="slider__value">50</span></div>
+            <input id="variety" type="range" min="0" max="100" step="1" value="50">
+          </div>
+        </div>
+      </details>
+
+      <!-- 1. ESTA FOTO (só aparece com uma foto selecionada) -->
       <details id="photo-group" class="group group--photo" open hidden>
         <summary class="group__head">
           <span class="group__legend">Esta foto</span>
           <svg class="group__chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
         </summary>
         <div class="group__body">
-          <div class="field">
-            <span class="field__label">Formato só desta</span>
-            <div id="photo-cut" class="seg seg--wrap" role="group" aria-label="Formato desta foto">
-              <button class="seg__btn is-active" type="button" data-value="auto" aria-pressed="true">Igual ao quadro</button>
-              <button class="seg__btn" type="button" data-value="torn" aria-pressed="false">Rasgado</button>
-              <button class="seg__btn" type="button" data-value="sharp" aria-pressed="false">Reto</button>
-              <button class="seg__btn" type="button" data-value="rounded" aria-pressed="false">Arredondado</button>
-              <button class="seg__btn" type="button" data-value="polaroid" aria-pressed="false">Polaroide</button>
-              <button class="seg__btn" type="button" data-value="arch" aria-pressed="false">Arco</button>
-              <button class="seg__btn" type="button" data-value="circle" aria-pressed="false">Círculo</button>
-              <button class="seg__btn" type="button" data-value="hex" aria-pressed="false">Hexágono</button>
-              <button class="seg__btn" type="button" data-value="blob" aria-pressed="false">Orgânico</button>
-              <button class="seg__btn" type="button" data-value="scallop" aria-pressed="false">Ondulado</button>
-              <button class="seg__btn" type="button" data-value="stamp" aria-pressed="false">Selo</button>
-              <button class="seg__btn" type="button" data-value="tag" aria-pressed="false">Etiqueta</button>
-              <button class="seg__btn" type="button" data-value="film" aria-pressed="false">Filme</button>
-              <button class="seg__btn" type="button" data-value="heart" aria-pressed="false">Coração</button>
-            </div>
-          </div>
-
-          <div class="field">
-            <span class="field__label">Categoria</span>
-            <div id="photo-category" class="seg seg--wrap" role="group" aria-label="Categoria de customização"></div>
-          </div>
-
-          <div class="field">
-            <span class="field__label">Customização</span>
-            <div id="photo-decor" class="seg seg--wrap seg--decor" role="group" aria-label="Customização desta foto"></div>
-          </div>
-
           <div class="field">
             <span class="field__label">Cor</span>
             <div id="photo-tint" class="seg seg--wrap" role="group" aria-label="Tratamento de cor">
@@ -278,7 +283,48 @@
         </div>
       </details>
 
-      <!-- 1. TAMANHO -->
+      <!-- 2. ESTILO -->
+      <details class="group" open>
+        <summary class="group__head">
+          <span class="group__legend">Estilo</span>
+          <svg class="group__chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="group__body">
+          <div class="field">
+            <span id="cut-scope" class="field__label">Formato de todas as fotos</span>
+            <div id="cut-family" class="seg seg--wrap" role="group" aria-label="Família de formato"></div>
+            <div id="cut" class="seg seg--wrap" role="group" aria-label="Formato"></div>
+            <button id="cut-inherit" class="btn btn--ghost btn--block" type="button" hidden>Usar o formato do quadro</button>
+          </div>
+
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="tear">Rasgo</label><span id="tear-value" class="slider__value">55</span></div>
+            <input id="tear" type="range" min="0" max="100" step="1" value="55">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="fringe">Fibra</label><span id="fringe-value" class="slider__value">40</span></div>
+            <input id="fringe" type="range" min="0" max="100" step="1" value="40">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="shadow">Sombra</label><span id="shadow-value" class="slider__value">35</span></div>
+            <input id="shadow" type="range" min="0" max="100" step="1" value="35">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="tilt">Inclinação</label><span id="tilt-value" class="slider__value">20</span></div>
+            <input id="tilt" type="range" min="0" max="100" step="1" value="20">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="tape">Fita</label><span id="tape-value" class="slider__value">0</span></div>
+            <input id="tape" type="range" min="0" max="100" step="1" value="0">
+          </div>
+          <div class="slider">
+            <div class="slider__top"><label class="slider__label" for="radius">Cantos</label><span id="radius-value" class="slider__value">8</span></div>
+            <input id="radius" type="range" min="0" max="50" step="1" value="8">
+          </div>
+        </div>
+      </details>
+
+      <!-- 3. TAMANHO -->
       <details class="group" open>
         <summary class="group__head">
           <span class="group__legend">Tamanho</span>
@@ -317,95 +363,6 @@
           </div>
 
           <p id="size-readout" class="readout">30 × 40 cm · 300 dpi</p>
-        </div>
-      </details>
-
-      <!-- 2. ARRANJO -->
-      <details class="group" open>
-        <summary class="group__head">
-          <span class="group__legend">Arranjo</span>
-          <svg class="group__chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-        </summary>
-        <div class="group__body">
-          <div class="field">
-            <span class="field__label">Motor</span>
-            <div id="engine" class="seg" role="group" aria-label="Motor de arranjo">
-              <button class="seg__btn is-active" type="button" data-value="mosaic" aria-pressed="true">Mosaico</button>
-              <button class="seg__btn" type="button" data-value="bento" aria-pressed="false">Bento</button>
-              <button class="seg__btn" type="button" data-value="scatter" aria-pressed="false">Espalhado</button>
-            </div>
-          </div>
-
-          <button id="btn-shuffle" class="btn btn--ghost btn--block" type="button">
-            <svg viewBox="0 0 24 24" aria-hidden="true" class="btn__icon"><path d="M17 4h4v4"/><path d="M3 20 21 4"/><path d="M17 20h4v-4"/><path d="m3 4 6 6"/><path d="m15 16 6 4"/></svg>
-            Novo arranjo
-          </button>
-
-          <div class="slider">
-            <div class="slider__top"><label class="slider__label" for="margin">Margem</label><span id="margin-value" class="slider__value">18</span></div>
-            <input id="margin" type="range" min="0" max="60" step="1" value="18">
-          </div>
-          <div class="slider">
-            <div class="slider__top"><label class="slider__label" for="gutter">Respiro</label><span id="gutter-value" class="slider__value">12</span></div>
-            <input id="gutter" type="range" min="0" max="48" step="1" value="12">
-          </div>
-          <div class="slider">
-            <div class="slider__top"><label class="slider__label" for="variety">Variedade</label><span id="variety-value" class="slider__value">50</span></div>
-            <input id="variety" type="range" min="0" max="100" step="1" value="50">
-          </div>
-        </div>
-      </details>
-
-      <!-- 3. ESTILO -->
-      <details class="group" open>
-        <summary class="group__head">
-          <span class="group__legend">Estilo</span>
-          <svg class="group__chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-        </summary>
-        <div class="group__body">
-          <div class="field">
-            <span class="field__label">Recorte</span>
-            <div id="cut" class="seg seg--wrap" role="group" aria-label="Tipo de recorte">
-              <button class="seg__btn is-active" type="button" data-value="torn" aria-pressed="true">Rasgado</button>
-              <button class="seg__btn" type="button" data-value="sharp" aria-pressed="false">Reto</button>
-              <button class="seg__btn" type="button" data-value="rounded" aria-pressed="false">Arredondado</button>
-              <button class="seg__btn" type="button" data-value="polaroid" aria-pressed="false">Polaroide</button>
-              <button class="seg__btn" type="button" data-value="arch" aria-pressed="false">Arco</button>
-              <button class="seg__btn" type="button" data-value="circle" aria-pressed="false">Círculo</button>
-              <button class="seg__btn" type="button" data-value="hex" aria-pressed="false">Hexágono</button>
-              <button class="seg__btn" type="button" data-value="blob" aria-pressed="false">Orgânico</button>
-              <button class="seg__btn" type="button" data-value="scallop" aria-pressed="false">Ondulado</button>
-              <button class="seg__btn" type="button" data-value="stamp" aria-pressed="false">Selo</button>
-              <button class="seg__btn" type="button" data-value="tag" aria-pressed="false">Etiqueta</button>
-              <button class="seg__btn" type="button" data-value="film" aria-pressed="false">Filme</button>
-              <button class="seg__btn" type="button" data-value="heart" aria-pressed="false">Coração</button>
-            </div>
-          </div>
-
-          <div class="slider">
-            <div class="slider__top"><label class="slider__label" for="tear">Rasgo</label><span id="tear-value" class="slider__value">55</span></div>
-            <input id="tear" type="range" min="0" max="100" step="1" value="55">
-          </div>
-          <div class="slider">
-            <div class="slider__top"><label class="slider__label" for="fringe">Fibra</label><span id="fringe-value" class="slider__value">40</span></div>
-            <input id="fringe" type="range" min="0" max="100" step="1" value="40">
-          </div>
-          <div class="slider">
-            <div class="slider__top"><label class="slider__label" for="shadow">Sombra</label><span id="shadow-value" class="slider__value">35</span></div>
-            <input id="shadow" type="range" min="0" max="100" step="1" value="35">
-          </div>
-          <div class="slider">
-            <div class="slider__top"><label class="slider__label" for="tilt">Inclinação</label><span id="tilt-value" class="slider__value">20</span></div>
-            <input id="tilt" type="range" min="0" max="100" step="1" value="20">
-          </div>
-          <div class="slider">
-            <div class="slider__top"><label class="slider__label" for="tape">Fita</label><span id="tape-value" class="slider__value">0</span></div>
-            <input id="tape" type="range" min="0" max="100" step="1" value="0">
-          </div>
-          <div class="slider">
-            <div class="slider__top"><label class="slider__label" for="radius">Cantos</label><span id="radius-value" class="slider__value">8</span></div>
-            <input id="radius" type="range" min="0" max="50" step="1" value="8">
-          </div>
         </div>
       </details>
 

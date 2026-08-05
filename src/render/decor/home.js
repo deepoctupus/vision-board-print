@@ -1,25 +1,23 @@
-import { makeRng, range, pick } from '../../core/rng.js';
+import { makeRng, range } from '../../core/rng.js';
 import { roundedRect } from '../shapes.js';
+import { inkHeight, inkLine, inkWords } from './ink.js';
 
 /**
  * Casa e corpo: a seção do quadro onde entram "quero essa casa", "quero esse
  * corpo", "quero essa rotina". Cada estilo finge que a foto foi impressa em cima
  * de um objeto da vida doméstica — a prancha do arquiteto, a ficha da academia,
  * o azulejo da parede.
+ *
+ * Nenhum deles escreve palavra alguma: o recorte não sabe de que casa é a foto,
+ * então onde iria uma linha de texto fica só a marca dela (ver `ink.js`).
  */
 
 const TAU = Math.PI * 2;
 const DEG = Math.PI / 180;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
-const SANS = '"Inter", system-ui, sans-serif';
-const SERIF = '"Fraunces", Georgia, serif';
-const MONO = 'ui-monospace, monospace';
-
-/** Abaixo disso o texto vira borrão na prévia a 26% e não paga o custo de desenhar. */
+/** Abaixo disso a marca vira borrão na prévia a 26% e não paga o custo de desenhar. */
 const MIN_TEXT_MM = 1.6;
-
-const num = (v, casas = 2) => v.toFixed(casas).replace('.', ',');
 
 /**
  * Reparte a altura entre as faixas impressas e a foto. Peças muito baixas (uma
@@ -33,52 +31,13 @@ function bands(h, parts, minPhoto = 0.34) {
   return parts.map((p) => p * k);
 }
 
-function tools(ctx, pxPerMm) {
+function tools(pxPerMm) {
   return {
     px: (mm) => mm * pxPerMm,
     hair: (mm) => Math.max(0.35, mm * pxPerMm),
-    font(sizeMm, family = SANS, weight = 400) {
-      ctx.font = `${weight} ${Math.max(MIN_TEXT_MM, sizeMm) * pxPerMm}px ${family}`;
-    },
+    /** Altura da barra que ocupa o lugar de um corpo de `sizeMm`. */
+    bar: (sizeMm) => inkHeight(Math.max(MIN_TEXT_MM, sizeMm), pxPerMm),
   };
-}
-
-/**
- * Escreve respeitando uma largura máxima. Se não couber, comprime na horizontal
- * em vez de reduzir o corpo — abaixo do mínimo legível a linha some de vez, e
- * uma letra estreita ainda se lê.
- */
-function write(ctx, text, x, y, maxPx) {
-  if (!(maxPx > 0)) return;
-  const w = ctx.measureText(text).width;
-  if (w <= maxPx) {
-    ctx.fillText(text, x, y);
-    return;
-  }
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(maxPx / w, 1);
-  ctx.fillText(text, 0, 0);
-  ctx.restore();
-}
-
-/** `ctx.letterSpacing` não existe em todo navegador; o tracking é manual. */
-function tracked(ctx, text, x, y, spacing, maxPx) {
-  const chars = [...text];
-  let total = -spacing;
-  for (const c of chars) total += ctx.measureText(c).width + spacing;
-  const k = maxPx > 0 && total > maxPx ? maxPx / total : 1;
-
-  ctx.save();
-  ctx.textAlign = 'left';
-  ctx.translate(x - (total * k) / 2, y);
-  ctx.scale(k, 1);
-  let cx = 0;
-  for (const c of chars) {
-    ctx.fillText(c, cx, 0);
-    cx += ctx.measureText(c).width + spacing;
-  }
-  ctx.restore();
 }
 
 function arrowHead(ctx, x, y, ux, uy, size) {
@@ -141,12 +100,9 @@ const planta = {
       photoBox: box,
       zones: { edge, gutter, stamp },
       decorate(ctx, info) {
-        const { px, hair, font } = tools(ctx, info.pxPerMm);
+        const { px, hair, bar } = tools(info.pxPerMm);
         const rng = makeRng(info.seed ^ 0x9a13c5);
         const ink = 'rgba(38,44,52,0.9)';
-        const larguraM = range(rng, 7.4, 13.2);
-        const fundoM = clamp(larguraM * (box.h / box.w), 4.2, 16);
-        const areaM2 = larguraM * fundoM * range(rng, 0.74, 0.86);
         const cotaMm = clamp(gutter * 0.3, MIN_TEXT_MM, 2.6);
 
         ctx.save();
@@ -198,36 +154,34 @@ const planta = {
         ctx.lineTo(box.x + box.w, box.y);
         ctx.stroke();
 
-        const fr = (split - box.x) / box.w;
-        font(cotaMm, MONO, 500);
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'bottom';
-        write(ctx, num(larguraM * fr), (box.x + split) / 2, cy - px(0.4), (split - box.x) * 0.9);
-        write(ctx, num(larguraM * (1 - fr)), (split + box.x + box.w) / 2, cy - px(0.4), (box.x + box.w - split) * 0.9);
+        // Marcas das cotas, acima do fio: a linha de baixo do número ficava em
+        // `cy - 0.4`, então o meio da barra sobe metade da altura dela.
+        const cotaH = bar(cotaMm);
+        const cotaY = cy - px(0.4) - cotaH / 2;
+        inkLine(ctx, (box.x + split) / 2, cotaY, Math.min((split - box.x) * 0.9, cotaH * 3.4), cotaH, 'center');
+        inkLine(ctx, (split + box.x + box.w) / 2, cotaY, Math.min((box.x + box.w - split) * 0.9, cotaH * 3.4), cotaH, 'center');
 
         const cx = -hw + px(edge + gutter * 0.42);
         dimLine(ctx, cx, box.y, cx, box.y + box.h, ext, head);
         ctx.save();
         ctx.translate(cx - px(0.4), box.y + box.h / 2);
         ctx.rotate(-90 * DEG);
-        write(ctx, `${num(fundoM)} m`, 0, 0, box.h * 0.9);
+        inkLine(ctx, 0, -cotaH / 2, Math.min(box.h * 0.9, cotaH * 4.2), cotaH, 'center');
         ctx.restore();
 
         // Etiqueta de ambiente sobre a foto
         const tagMm = clamp(min * 0.045, MIN_TEXT_MM, 3);
-        font(tagMm, SANS, 600);
-        const room = pick(rng, ['SALA', 'SUÍTE', 'VARANDA', 'COZINHA']);
-        const label = `${room}  ${num(areaM2 * range(rng, 0.16, 0.24), 1)} m²`;
         const padx = px(tagMm * 0.5);
-        const plateW = Math.min(ctx.measureText(label).width + padx * 2, box.w * 0.8);
+        // Sem texto a largura não pode vir de `measureText`: nasce do corpo da
+        // etiqueta, senão a plaquinha some.
+        const plateW = Math.min(box.w * 0.8, px(tagMm * 8.2));
         const plateH = px(tagMm * 1.9);
         const plateX = box.x + px(1.2);
         const plateY = box.y + box.h - plateH - px(1.2);
         ctx.fillStyle = 'rgba(252,250,244,0.86)';
         ctx.fill(roundedRect(plateX, plateY, plateW, plateH, px(0.4)));
         ctx.fillStyle = ink;
-        ctx.textBaseline = 'middle';
-        write(ctx, label, plateX + plateW / 2, plateY + plateH / 2, plateW - padx);
+        inkWords(ctx, plateX + padx, plateY + plateH / 2, plateW - padx * 2, bar(tagMm), 'left', 2, 0x1a5b);
 
         // Carimbo
         const sy = hh - px(edge + stamp);
@@ -236,20 +190,20 @@ const planta = {
         ctx.moveTo(-hw + px(edge), sy);
         ctx.lineTo(hw - px(edge), sy);
         ctx.stroke();
-        const cells = ['PLANTA BAIXA', 'ESC. 1:50', `${num(areaM2, 1)} m²`];
-        const cw = (hw * 2 - px(edge * 2)) / cells.length;
+        const cells = 3;
+        const cw = (hw * 2 - px(edge * 2)) / cells;
         ctx.lineWidth = hair(0.18);
         ctx.beginPath();
-        for (let i = 1; i < cells.length; i++) {
+        for (let i = 1; i < cells; i++) {
           ctx.moveTo(-hw + px(edge) + cw * i, sy);
           ctx.lineTo(-hw + px(edge) + cw * i, hh - px(edge));
         }
         ctx.stroke();
-        font(clamp(stamp * 0.24, MIN_TEXT_MM, 2.8), SANS, 600);
-        ctx.textBaseline = 'middle';
-        cells.forEach((t, i) => {
-          write(ctx, t, -hw + px(edge) + cw * (i + 0.5), sy + (hh - px(edge) - sy) / 2, cw * 0.86);
-        });
+        const stampH = bar(clamp(stamp * 0.24, MIN_TEXT_MM, 2.8));
+        const stampY = sy + (hh - px(edge) - sy) / 2;
+        for (let i = 0; i < cells; i++) {
+          inkWords(ctx, -hw + px(edge) + cw * (i + 0.5), stampY, cw * 0.66, stampH, 'center', 2, 0x2c17 + i * 613);
+        }
 
         // Rosa dos ventos
         const nr = px(gutter * 0.28);
@@ -374,8 +328,7 @@ const chave = {
       metal,
       anchor: { x: 0, y: holeY, r: holeR * pxPerMm, bow: P(0, 0) },
       decorate(ctx, info) {
-        const { px, hair, font } = tools(ctx, info.pxPerMm);
-        const rr = makeRng(info.seed ^ 0x77c2);
+        const { px, hair, bar } = tools(info.pxPerMm);
 
         ctx.save();
         ctx.lineCap = 'round';
@@ -410,10 +363,9 @@ const chave = {
         ctx.arc(0, holeY, holeR * info.pxPerMm * 1.35, 0, TAU);
         ctx.stroke();
 
-        // Escrito na etiqueta
+        // Marcas na etiqueta: um fio e duas linhas impressas embaixo dele
         const titleMm = clamp(foot * 0.4, MIN_TEXT_MM, 5);
         const maxW = box.w;
-        ctx.textAlign = 'center';
         ctx.strokeStyle = 'rgba(70,58,42,0.35)';
         ctx.lineWidth = hair(0.16);
         ctx.beginPath();
@@ -421,13 +373,12 @@ const chave = {
         ctx.lineTo(box.x + box.w, B - px(foot * 0.92));
         ctx.stroke();
 
+        const titleH = bar(titleMm);
         ctx.fillStyle = 'rgba(46,38,28,0.92)';
-        font(titleMm, SERIF, 600);
-        ctx.textBaseline = 'alphabetic';
-        write(ctx, pick(rr, ['casa nova', 'lar doce lar', 'minha casa', 'apê novo']), 0, B - px(foot * 0.4), maxW);
-        font(clamp(foot * 0.2, MIN_TEXT_MM, 2.2), MONO, 500);
+        inkWords(ctx, 0, B - px(foot * 0.4) - titleH / 2, Math.min(maxW * 0.74, titleH * 7.5), titleH, 'center', 2, info.seed);
+        const subH = bar(clamp(foot * 0.2, MIN_TEXT_MM, 2.2));
         ctx.fillStyle = 'rgba(70,58,42,0.72)';
-        tracked(ctx, `2 VIAS · ${Math.floor(range(rr, 2027, 2031))}`, 0, B - px(foot * 0.12), px(0.25), maxW);
+        inkWords(ctx, 0, B - px(foot * 0.12) - subH / 2, Math.min(maxW * 0.6, subH * 9), subH, 'center', 3, info.seed ^ 0x77c2);
         ctx.restore();
       },
     };
@@ -473,7 +424,7 @@ const vendido = {
       photo: rectPath(box),
       photoBox: box,
       decorate(ctx, info) {
-        const { px, hair, font } = tools(ctx, info.pxPerMm);
+        const { px, hair, bar } = tools(info.pxPerMm);
         const rng = makeRng(seed ^ 0x5cd10a);
         const board = roundedRect(-hw, -hh, hw * 2, boardH * pxPerMm, px(0.7));
 
@@ -484,20 +435,18 @@ const vendido = {
         ctx.fillStyle = '#27343d';
         ctx.fillRect(-hw, -hh, hw * 2, px(head));
         ctx.fillStyle = 'rgba(250,246,238,0.95)';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        font(clamp(head * 0.4, MIN_TEXT_MM, 3.4), SANS, 700);
-        tracked(ctx, 'CASA PRÓPRIA', 0, -hh + px(head / 2), px(clamp(head * 0.1, 0.2, 0.8)), hw * 1.7);
+        const headH = bar(clamp(head * 0.4, MIN_TEXT_MM, 3.4));
+        inkWords(ctx, 0, -hh + px(head / 2), Math.min(hw * 1.4, headH * 11), headH, 'center', 2, seed);
 
         // Rodapé
         const fy = boardBottom * pxPerMm - px(foot);
         ctx.fillStyle = 'rgba(30,38,45,0.08)';
         ctx.fillRect(-hw, fy, hw * 2, px(foot));
         ctx.fillStyle = 'rgba(39,52,61,0.9)';
-        font(clamp(foot * 0.38, MIN_TEXT_MM, 3), MONO, 600);
-        write(ctx, '(11) 9 8888-0000', 0, fy + px(foot / 2), hw * 1.8);
+        const footH = bar(clamp(foot * 0.38, MIN_TEXT_MM, 3));
+        inkWords(ctx, 0, fy + px(foot / 2), Math.min(hw * 1.3, footH * 12), footH, 'center', 3, seed ^ 0x1f0b);
 
-        // Faixa de vendido, levemente torta como uma etiqueta colada depois
+        // Faixa vermelha, levemente torta como uma etiqueta colada depois
         const bandH = clamp(boardH * 0.19, 4, 15);
         const tilt = range(rng, -7, -3) * DEG;
         ctx.save();
@@ -513,9 +462,11 @@ const vendido = {
         ctx.strokeStyle = 'rgba(255,248,240,0.75)';
         ctx.lineWidth = hair(0.22);
         ctx.strokeRect(-bw / 2 + px(0.7), -px(bandH) / 2 + px(0.7), bw - px(1.4), px(bandH) - px(1.4));
+        // A faixa é o peso da peça inteira, por isso a marca aqui é mais gorda
+        // que o padrão: sem ela o estilo vira um retângulo vermelho vazio.
         ctx.fillStyle = '#fff8f0';
-        font(clamp(bandH * 0.52, MIN_TEXT_MM, 6.5), SANS, 800);
-        tracked(ctx, 'VENDIDO', 0, 0, px(clamp(bandH * 0.16, 0.3, 1.6)), hw * 1.7);
+        const bandInk = bar(clamp(bandH * 0.52, MIN_TEXT_MM, 6.5)) * 1.25;
+        inkWords(ctx, 0, 0, Math.min(hw * 1.5, bandInk * 7.5), bandInk, 'center', 3, seed ^ 0x5cd1);
         ctx.restore();
 
         // Parafusos
@@ -544,9 +495,6 @@ const vendido = {
 
 /* ----------------------------------------------------------- ficha de treino */
 
-const EXERCICIOS = ['AGACHAMENTO', 'SUPINO RETO', 'REMADA', 'LEVANTAMENTO', 'PRANCHA', 'AFUNDO'];
-const SERIES = ['4×12', '3×10', '4×08', '3×15', '5×05'];
-
 const treino = {
   id: 'v-treino',
   label: 'Ficha de treino',
@@ -569,7 +517,7 @@ const treino = {
       photo: rectPath(box),
       photoBox: box,
       decorate(ctx, info) {
-        const { px, hair, font } = tools(ctx, info.pxPerMm);
+        const { px, hair, bar } = tools(info.pxPerMm);
         const rng = makeRng(seed ^ 0x4e91b3);
         const top = hh - px(panel);
         const left = -hw + px(pad);
@@ -582,14 +530,11 @@ const treino = {
         ctx.fillStyle = '#22292e';
         ctx.fillRect(-hw, -hh, hw * 2, px(head));
         ctx.fillStyle = '#f6f2ea';
-        ctx.textBaseline = 'middle';
-        ctx.textAlign = 'left';
-        font(clamp(head * 0.42, MIN_TEXT_MM, 3.6), SANS, 700);
-        write(ctx, `TREINO ${pick(rng, ['A', 'B', 'C'])}`, left, -hh + px(head / 2), hw * 0.9);
-        ctx.textAlign = 'right';
-        font(clamp(head * 0.3, MIN_TEXT_MM, 2.4), MONO, 500);
+        const headH = bar(clamp(head * 0.42, MIN_TEXT_MM, 3.6));
+        inkWords(ctx, left, -hh + px(head / 2), Math.min(hw * 0.8, headH * 7), headH, 'left', 2, seed);
+        const dayH = bar(clamp(head * 0.3, MIN_TEXT_MM, 2.4));
         ctx.fillStyle = 'rgba(246,242,234,0.7)';
-        write(ctx, 'SEG · QUA · SEX', right, -hh + px(head / 2), hw * 0.8);
+        inkWords(ctx, right, -hh + px(head / 2), Math.min(hw * 0.7, dayH * 9), dayH, 'right', 3, seed ^ 0x11a3);
 
         // Quadriculado só no painel — sobre a foto viraria sujeira
         ctx.save();
@@ -637,25 +582,20 @@ const treino = {
         ctx.stroke();
 
         ctx.fillStyle = ink;
-        ctx.textAlign = 'left';
-        font(body * 0.86, SANS, 700);
+        const titleH = bar(body * 0.86);
         const midY = (i) => top + px(pad * 0.5) + rowH * (i + 0.5);
-        write(ctx, 'EXERCÍCIO', left + px(0.7), midY(0), colName - left - px(1.4));
-        write(ctx, 'SÉRIES', colName + px(0.7), midY(0), colSet - colName - px(1.4));
-        write(ctx, 'CARGA', colSet + px(0.7), midY(0), right - colSet - px(1.4));
+        inkLine(ctx, left + px(0.7), midY(0), Math.min(colName - left - px(1.4), titleH * 5), titleH);
+        inkLine(ctx, colName + px(0.7), midY(0), Math.min(colSet - colName - px(1.4), titleH * 3.4), titleH);
+        inkLine(ctx, colSet + px(0.7), midY(0), Math.min(right - colSet - px(1.4), titleH * 3.2), titleH);
 
-        const usados = new Set();
+        const bodyH = bar(body);
         for (let r = 1; r <= rows; r++) {
-          if (midY(r) > hh - px(0.5)) break;
-          let nome = pick(rng, EXERCICIOS);
-          while (usados.has(nome)) nome = EXERCICIOS[(EXERCICIOS.indexOf(nome) + 1) % EXERCICIOS.length];
-          usados.add(nome);
-          font(body, SANS, 500);
+          const y = midY(r);
+          if (y > hh - px(0.5)) break;
           ctx.fillStyle = ink;
-          write(ctx, nome, left + px(0.7), midY(r), colName - left - px(1.4));
-          font(body, MONO, 500);
-          write(ctx, pick(rng, SERIES), colName + px(0.7), midY(r), colSet - colName - px(1.4));
-          write(ctx, `${Math.round(range(rng, 8, 42))} kg`, colSet + px(0.7), midY(r), right - colSet - px(1.4));
+          inkWords(ctx, left + px(0.7), y, Math.min(colName - left - px(1.4), bodyH * 8), bodyH, 'left', 2, seed + r * 977);
+          inkLine(ctx, colName + px(0.7), y, Math.min(colSet - colName - px(1.4), bodyH * 2.6), bodyH);
+          inkLine(ctx, colSet + px(0.7), y, Math.min(right - colSet - px(1.4), bodyH * 2.8), bodyH);
 
           // Risco de caneta em cima do que já foi feito
           if (rng() > 0.45) {
@@ -663,7 +603,6 @@ const treino = {
             ctx.strokeStyle = 'rgba(38,74,158,0.75)';
             ctx.lineWidth = hair(0.3);
             ctx.lineCap = 'round';
-            const y = midY(r);
             const x0 = right - px(2.6);
             ctx.beginPath();
             ctx.moveTo(x0, y);
@@ -681,13 +620,8 @@ const treino = {
 
 /* ---------------------------------------------------------- ficha de receita */
 
-const RECEITAS = ['Bolo de fubá', 'Pão de queijo', 'Sopa de domingo', 'Café da manhã'];
-const INGREDIENTES = [
-  ['2 xíc. de fubá', '1 xíc. de leite', '3 ovos', 'forno 180°'],
-  ['500 g de polvilho', '200 g de queijo', '1 xíc. de leite', '2 ovos'],
-  ['1 kg de legumes', '2 l de caldo', 'sal e alecrim', 'fogo baixo'],
-  ['pão na chapa', 'café coado', 'ovos mexidos', 'sem pressa'],
-];
+/** Quantas linhas da pauta saem impressas antes de a ficha ficar em branco. */
+const RECEITA_ITENS = 4;
 
 const receita = {
   id: 'v-receita',
@@ -712,9 +646,8 @@ const receita = {
       photo: rectPath(box),
       photoBox: box,
       decorate(ctx, info) {
-        const { px, hair, font } = tools(ctx, info.pxPerMm);
+        const { px, hair, bar } = tools(info.pxPerMm);
         const rng = makeRng(seed ^ 0x2ac8f1);
-        const idx = Math.floor(rng() * RECEITAS.length) % RECEITAS.length;
         const red = 'rgba(178,58,48,0.8)';
         const blue = 'rgba(104,140,178,0.55)';
 
@@ -730,17 +663,14 @@ const receita = {
         ctx.stroke();
 
         // Cabeçalho
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'alphabetic';
-        ctx.fillStyle = 'rgba(150,120,92,0.85)';
-        font(clamp(head * 0.2, MIN_TEXT_MM, 2.2), MONO, 600);
         const x0 = -hw + px(marginX);
         const w0 = hw * 2 - px(marginX + pad);
-        tracked(ctx, 'RECEITA DA CASA', x0 + w0 / 2, -hh + px(head * 0.32), px(0.3), w0);
+        const kickerH = bar(clamp(head * 0.2, MIN_TEXT_MM, 2.2));
+        ctx.fillStyle = 'rgba(150,120,92,0.85)';
+        inkWords(ctx, x0 + w0 / 2, -hh + px(head * 0.32) - kickerH / 2, Math.min(w0 * 0.5, kickerH * 10), kickerH, 'center', 2, seed);
+        const titleH = bar(clamp(head * 0.4, MIN_TEXT_MM, 5));
         ctx.fillStyle = 'rgba(52,40,32,0.92)';
-        font(clamp(head * 0.4, MIN_TEXT_MM, 5), SERIF, 600);
-        ctx.textAlign = 'center';
-        write(ctx, RECEITAS[idx], x0 + w0 / 2, -hh + px(head * 0.78), w0);
+        inkWords(ctx, x0 + w0 / 2, -hh + px(head * 0.78) - titleH / 2, Math.min(w0 * 0.8, titleH * 8), titleH, 'center', 2, seed ^ 0x2ac8);
         ctx.strokeStyle = red;
         ctx.lineWidth = hair(0.3);
         ctx.beginPath();
@@ -748,12 +678,12 @@ const receita = {
         ctx.lineTo(x0 + w0, -hh + px(head * 0.92));
         ctx.stroke();
 
-        // Pauta e ingredientes
+        // Pauta e marcas de lista
         const step = px(clamp(min * 0.06, 2.4, 5.4));
         const first = box.y + box.h + step * 0.9;
-        const lista = INGREDIENTES[idx];
+        const itemH = bar(clamp((step / info.pxPerMm) * 0.46, MIN_TEXT_MM, 2.8));
+        const dash = itemH * 1.8;
         ctx.lineWidth = hair(0.15);
-        ctx.textAlign = 'left';
         let n = 0;
         for (let y = first; y < hh - px(pad * 0.4); y += step, n++) {
           ctx.strokeStyle = blue;
@@ -761,18 +691,18 @@ const receita = {
           ctx.moveTo(-hw + px(marginX * 0.55), y);
           ctx.lineTo(hw - px(pad), y);
           ctx.stroke();
-          if (n < lista.length) {
+          if (n < RECEITA_ITENS) {
+            const my = y - px(0.5) - itemH / 2;
             ctx.fillStyle = 'rgba(52,44,36,0.85)';
-            font(clamp(step / info.pxPerMm * 0.46, MIN_TEXT_MM, 2.8), SANS, 400);
-            write(ctx, `— ${lista[n]}`, x0, y - px(0.5), w0 * 0.95);
+            inkLine(ctx, x0, my, dash, itemH * 0.34);
+            inkWords(ctx, x0 + dash + itemH * 0.8, my, w0 * 0.62 - dash, itemH, 'left', 3, seed + n * 613);
           }
         }
 
         // Rodapé técnico e mancha de café
-        ctx.textAlign = 'right';
+        const footH = bar(clamp(head * 0.18, MIN_TEXT_MM, 2.1));
         ctx.fillStyle = 'rgba(150,120,92,0.9)';
-        font(clamp(head * 0.18, MIN_TEXT_MM, 2.1), MONO, 500);
-        write(ctx, `${Math.round(range(rng, 20, 60))} MIN · RENDE ${Math.round(range(rng, 2, 9))}`, hw - px(pad), -hh + px(head * 0.32), w0 * 0.6);
+        inkWords(ctx, hw - px(pad), -hh + px(head * 0.32) - footH / 2, Math.min(w0 * 0.36, footH * 8), footH, 'right', 2, seed ^ 0x51ba);
 
         const cr = px(clamp(min * 0.11, 3, 11));
         ctx.strokeStyle = 'rgba(148,104,62,0.22)';
@@ -787,9 +717,6 @@ const receita = {
 };
 
 /* ------------------------------------------------------------ mapa de hábitos */
-
-const MESES = ['JANEIRO', 'FEVEREIRO', 'MARÇO', 'ABRIL', 'MAIO', 'JUNHO', 'JULHO', 'AGOSTO', 'SETEMBRO', 'OUTUBRO', 'NOVEMBRO', 'DEZEMBRO'];
-const DIAS = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 
 const habitos = {
   id: 'v-habitos',
@@ -813,25 +740,20 @@ const habitos = {
       photo: rectPath(box),
       photoBox: box,
       decorate(ctx, info) {
-        const { px, hair, font } = tools(ctx, info.pxPerMm);
+        const { px, hair, bar } = tools(info.pxPerMm);
         const rng = makeRng(seed ^ 0x6b0d24);
-        const mes = MESES[Math.floor(rng() * 12) % 12];
-        const ano = 2026 + Math.floor(rng() * 3);
         const accent = '#c2683a';
         const ink = 'rgba(46,40,34,0.9)';
 
         ctx.save();
-        ctx.textBaseline = 'middle';
 
         // Título
+        const titleH = bar(clamp(head * 0.42, MIN_TEXT_MM, 4.4));
         ctx.fillStyle = ink;
-        ctx.textAlign = 'left';
-        font(clamp(head * 0.42, MIN_TEXT_MM, 4.4), SERIF, 600);
-        write(ctx, mes, -hw + px(pad), -hh + px(head * 0.5), hw * 1.3);
-        ctx.textAlign = 'right';
+        inkWords(ctx, -hw + px(pad), -hh + px(head * 0.5), Math.min(hw * 0.9, titleH * 6), titleH, 'left', 1);
+        const yearH = bar(clamp(head * 0.28, MIN_TEXT_MM, 2.6));
         ctx.fillStyle = 'rgba(46,40,34,0.55)';
-        font(clamp(head * 0.28, MIN_TEXT_MM, 2.6), MONO, 500);
-        write(ctx, String(ano), hw - px(pad), -hh + px(head * 0.5), hw * 0.7);
+        inkLine(ctx, hw - px(pad), -hh + px(head * 0.5), Math.min(hw * 0.5, yearH * 2.8), yearH, 'right');
         ctx.strokeStyle = 'rgba(46,40,34,0.25)';
         ctx.lineWidth = hair(0.2);
         ctx.beginPath();
@@ -850,11 +772,11 @@ const habitos = {
         const size = Math.min(colW, rowH) * 0.72;
         const left = -hw + px(pad);
 
-        ctx.textAlign = 'center';
+        // Cabeçalho da semana: sete marcas de uma letra só
+        const dayH = bar(clamp((headerH / info.pxPerMm) * 0.62, MIN_TEXT_MM, 2.6));
         ctx.fillStyle = 'rgba(46,40,34,0.5)';
-        font(clamp(headerH / info.pxPerMm * 0.62, MIN_TEXT_MM, 2.6), SANS, 600);
         for (let c = 0; c < 7; c++) {
-          write(ctx, DIAS[c], left + colW * (c + 0.5), top + headerH * 0.5, colW * 0.9);
+          inkLine(ctx, left + colW * (c + 0.5), top + headerH * 0.5, Math.min(colW * 0.34, dayH * 0.8), dayH, 'center');
         }
 
         // Sequência: os primeiros dias saem cheios, depois falha de vez em quando
@@ -888,12 +810,14 @@ const habitos = {
           }
         }
 
-        // Contador, se sobrar faixa embaixo da grade
+        // Contador, se sobrar faixa embaixo da grade. A barra cresce com a
+        // sequência desenhada acima — ecoa a grade em vez de afirmar um número.
         const restH = hh - px(pad * 0.4) - (top + headerH + rowH * rows);
         if (restH > px(2.2)) {
+          const tallyH = bar(clamp((restH / info.pxPerMm) * 0.62, MIN_TEXT_MM, 2.8));
+          const tallyW = availW * clamp(0.3 + (done / (rows * 7)) * 0.4, 0.3, 0.66);
           ctx.fillStyle = accent;
-          font(clamp(restH / info.pxPerMm * 0.62, MIN_TEXT_MM, 2.8), SANS, 700);
-          write(ctx, `${done} dias seguidos`, 0, top + headerH + rowH * rows + restH * 0.5, availW * 0.9);
+          inkWords(ctx, 0, top + headerH + rowH * rows + restH * 0.5, tallyW, tallyH, 'center', 2, seed);
         }
         ctx.restore();
       },
@@ -930,7 +854,7 @@ const azulejo = {
       photo: oct,
       photoBox: box,
       decorate(ctx, info) {
-        const { px, hair } = tools(ctx, info.pxPerMm);
+        const { px, hair } = tools(info.pxPerMm);
         const rng = makeRng(seed ^ 0x1d77a4);
         const blue = '#2b4f8e';
         const inset = band * 0.28;
