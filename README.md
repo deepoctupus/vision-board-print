@@ -2,6 +2,16 @@
 
 O projeto Vision Board serve para permitir que você construa seu próprio "Quadro dos Sonhos" e pratique a visualização do futuro que almeja e dos bens que deseja construir.
 
+## Como rodar
+
+Rodar o projeto localmente é bem fácil e rápido: basta ter o Python instalado em sua máquina e executar, dentro da pasta com o projeto, o comando que abre um servidor local.
+
+```bash
+python -m http.server 8000
+```
+
+Você pode trocar o `8000` pela porta que quiser.
+
 ## Customização
 
 O projeto fornece toda a estrutura necessária para uma customização avançada do seu Quadro dos Sonhos:
