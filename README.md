@@ -2,6 +2,20 @@
 
 O projeto Vision Board serve para permitir que você construa seu próprio "Quadro dos Sonhos" e pratique a visualização do futuro que almeja e dos bens que deseja construir.
 
+| | |
+|:--:|:--:|
+| <img src="assets/samples/exemplo-1.jpg" alt="Quadro em mosaico, com recortes de borda rasgada" width="380"> | <img src="assets/samples/exemplo-2.jpg" alt="Quadro em arranjo bento, com recortes polaroid e selo" width="380"> |
+
+As duas imagens acima usam exatamente as mesmas fotos — o que muda é o arranjo, o formato dos recortes e os detalhes decorativos. Ambas foram exportadas em A3 (297×420 mm) a 300 dpi, prontas para a gráfica.
+
+## Testar sem instalar nada
+
+O projeto está publicado no GitHub Pages e roda inteiro no navegador:
+
+**https://deepoctupus.github.io/vision-board-print/**
+
+Suas fotos não são enviadas para lugar nenhum — todo o processamento e a exportação acontecem na sua própria máquina.
+
 ## Como rodar
 
 Rodar o projeto localmente é bem fácil e rápido: basta ter o Python instalado em sua máquina e executar, dentro da pasta com o projeto, o comando que abre um servidor local.
